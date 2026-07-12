@@ -10,7 +10,11 @@ export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
-  const origin = `${protocol}://${host}`;
+  const requestOrigin = `${protocol}://${host}`;
+  let origin = requestOrigin;
+  if (process.env.NEXT_PUBLIC_SITE_URL) {
+    try { origin = new URL(process.env.NEXT_PUBLIC_SITE_URL).origin; } catch { origin = requestOrigin; }
+  }
   const title = "Find Anything — Retrieval control plane for AI agents";
   const description = "Connect every workspace once. Give any agent permission-aware, coverage-accounted, and verifiable access to private files.";
 
@@ -18,6 +22,7 @@ export async function generateMetadata(): Promise<Metadata> {
     metadataBase: new URL(origin),
     title,
     description,
+    alternates: { canonical: origin },
     icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
     openGraph: {
       title,
