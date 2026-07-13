@@ -1,0 +1,1 @@
+import {NextResponse} from "next/server";export async function POST(){return NextResponse.json({error:{code:"FEEDBACK_STORAGE_NOT_CONFIGURED",message:"Feedback persistence, consent, retention, and internal RBAC must be configured before collection."}},{status:503})}

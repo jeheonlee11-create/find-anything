@@ -1,0 +1,1 @@
+"use client";import {useEffect} from "react";import {trackEvent} from "@/lib/analytics/client";import type {AnalyticsEventName} from "@/lib/analytics/events";export function AnalyticsBeacon({event}:{event:AnalyticsEventName}){useEffect(()=>trackEvent(event,{origin:"ui",plan:"demo"}),[event]);return null}

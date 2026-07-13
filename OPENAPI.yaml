@@ -1,0 +1,42 @@
+openapi: 3.1.0
+info:
+  title: Find Anything API
+  version: 0.2.0-demo
+  description: Synthetic demo retrieval contract. Production authentication and persistence are not configured.
+servers:
+  - url: https://api.findanything.dev
+paths:
+  /api/health:
+    get:
+      operationId: health
+      responses: {"200": {description: Healthy}}
+  /api/readiness:
+    get:
+      operationId: readiness
+      responses: {"200": {description: Demo readiness and production dependency state}}
+  /api/retrieval/search:
+    post:
+      operationId: searchFiles
+      parameters:
+        - in: header
+          name: X-Request-ID
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: {type: string, minLength: 1, maxLength: 2000}
+                mode: {type: string, enum: [ranked, find_all, exact_evidence, newest_version]}
+                page: {type: integer, minimum: 1}
+                pageSize: {type: integer, minimum: 1, maximum: 100}
+      responses:
+        "200": {description: Retrieval response with results, coverage, trace, and receipt}
+        "400": {description: Structured validation error}
+  /api/retrieval/find-all:
+    post:
+      operationId: findAllFiles
+      responses: {"200": {description: Paginated synthetic demo matches}}

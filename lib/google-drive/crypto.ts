@@ -1,0 +1,9 @@
+import {requireGoogleDriveEnvironment} from "@/lib/config/server-env";
+function base64Url(bytes:Uint8Array){let binary="";for(const value of bytes)binary+=String.fromCharCode(value);return btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g,"")}
+function fromBase64Url(value:string){const normalized=value.replace(/-/g,"+").replace(/_/g,"/").padEnd(Math.ceil(value.length/4)*4,"=");const binary=atob(normalized);return Uint8Array.from(binary,char=>char.charCodeAt(0))}
+export function randomToken(bytes=32){const data=new Uint8Array(bytes);crypto.getRandomValues(data);return base64Url(data)}
+export async function sha256(value:string){const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value));return base64Url(new Uint8Array(digest))}
+export async function pkceChallenge(verifier:string){return sha256(verifier)}
+async function encryptionKey(){const encoded=requireGoogleDriveEnvironment().tokenEncryptionKey;const raw=/^[a-f0-9]{64}$/i.test(encoded)?Uint8Array.from(encoded.match(/../g)!,byte=>parseInt(byte,16)):fromBase64Url(encoded);return crypto.subtle.importKey("raw",raw,"AES-GCM",false,["encrypt","decrypt"])}
+export async function encryptSecret(value:string){const iv=new Uint8Array(12);crypto.getRandomValues(iv);const ciphertext=await crypto.subtle.encrypt({name:"AES-GCM",iv},await encryptionKey(),new TextEncoder().encode(value));return `v1.${base64Url(iv)}.${base64Url(new Uint8Array(ciphertext))}`}
+export async function decryptSecret(value:string){const [version,iv,ciphertext]=value.split(".");if(version!=="v1"||!iv||!ciphertext)throw new Error("Unsupported encrypted secret format");const plaintext=await crypto.subtle.decrypt({name:"AES-GCM",iv:fromBase64Url(iv)},await encryptionKey(),fromBase64Url(ciphertext));return new TextDecoder().decode(plaintext)}

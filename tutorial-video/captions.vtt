@@ -1,0 +1,16 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:10.000
+Find Anything gives AI agents observable retrieval across private files.
+
+00:00:10.000 --> 00:00:25.000
+This demo uses seventy fictional records—never customer data.
+
+00:00:25.000 --> 00:00:45.000
+Find All evaluates every eligible indexed file and paginates the matching set.
+
+00:00:45.000 --> 00:01:02.000
+Exact citations and coverage show where evidence came from and what was missed.
+
+00:01:02.000 --> 00:01:20.000
+Live connectors and accounts remain disabled until production security is configured.

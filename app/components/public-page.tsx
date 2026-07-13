@@ -1,0 +1,3 @@
+import Link from "next/link";
+export function PublicPage({badge,title,lede,children}:{badge:string;title:string;lede:string;children:React.ReactNode}){return <main className="content-page"><nav className="content-nav"><Link className="brand" href="/"><span className="brand-mark">V</span><span>Vrtbrate</span></Link><div><Link href="/docs">Docs</Link><Link href="/trust">Security</Link><Link href="/app">Workspaces</Link></div></nav><header className="content-hero"><span className="page-badge">{badge}</span><h1>{title}</h1><p>{lede}</p></header>{children}</main>}
+export function StatusLabel({children}:{children:React.ReactNode}){return <span className="page-badge">{children}</span>}
