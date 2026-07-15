@@ -2,6 +2,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   betaAnalytics,
+  betaAccessAudit,
   betaFeedback,
   betaInvitations,
   betaUsers,
@@ -103,17 +104,20 @@ export async function inviteBetaUser(email: string, adminId: string) {
         approvedBy: adminId,
       },
     });
+  await db.insert(betaAccessAudit).values({ id: `audit_${crypto.randomUUID()}`, adminActorId: adminId, targetActorId: null, invitationId: row.id, action: "invitation_approved", createdAt: now });
   return { id: row.id, status: row.status, expiresAt: row.expiresAt };
 }
 export async function setBetaUserStatus(
   actorId: string,
-  status: "active" | "disabled",
+  status: "active" | "disabled" | "revoked",
+  adminActorId?: string,
 ) {
   const db = await getDb();
   await db
     .update(betaUsers)
     .set({ status, updatedAt: new Date().toISOString() })
     .where(eq(betaUsers.actorId, actorId));
+  if (adminActorId) await db.insert(betaAccessAudit).values({ id: `audit_${crypto.randomUUID()}`, adminActorId, targetActorId: actorId, invitationId: null, action: `user_${status}`, createdAt: new Date().toISOString() });
 }
 export async function completeOnboarding(actorId: string) {
   const db = await getDb(),
@@ -129,7 +133,13 @@ export async function saveFeedback(input: {
   category: string;
   query: string;
   traceId?: string | null;
+  receiptId?: string | null;
+  searchMode?: string | null;
+  selectedResultId?: string | null;
   resultIds: string[];
+  evidenceExcerpt?: string | null;
+  includeEvidenceExcerpt?: boolean;
+  applicationVersion?: string;
   comment: string;
 }) {
   const db = await getDb(),
@@ -143,8 +153,14 @@ export async function saveFeedback(input: {
       workspaceId: input.workspaceId,
       category: input.category,
       query: input.query.slice(0, 500),
+      searchMode: input.searchMode?.slice(0, 20) ?? null,
       traceId: input.traceId ?? null,
+      receiptId: input.receiptId ?? null,
+      selectedResultId: input.selectedResultId ?? null,
       resultIdsJson: JSON.stringify(input.resultIds.slice(0, 100)),
+      evidenceExcerpt: input.includeEvidenceExcerpt ? input.evidenceExcerpt?.slice(0, 500) ?? null : null,
+      includeEvidenceExcerpt: Boolean(input.includeEvidenceExcerpt),
+      applicationVersion: input.applicationVersion?.slice(0, 80) ?? "unknown",
       comment: input.comment.slice(0, 2000),
       status: "new",
       createdAt: now,
@@ -212,7 +228,7 @@ export async function rateLimit(
 }
 export async function betaAdminData() {
   const db = await getDb();
-  const [users, feedback, events] = await Promise.all([
+  const [users, feedback, events, audit] = await Promise.all([
     db
       .select({
         actorId: betaUsers.actorId,
@@ -233,6 +249,7 @@ export async function betaAdminData() {
       .select({ event: betaAnalytics.event, count: sql<number>`count(*)` })
       .from(betaAnalytics)
       .groupBy(betaAnalytics.event),
+    db.select().from(betaAccessAudit).orderBy(desc(betaAccessAudit.createdAt)).limit(100),
   ]);
   return {
     users,
@@ -244,5 +261,7 @@ export async function betaAdminData() {
     metrics: Object.fromEntries(
       events.map((row) => [row.event, Number(row.count)]),
     ),
+    audit,
   };
 }
+export async function deleteBetaAnalyticsForActor(actorId: string) { const db = await getDb(); await db.delete(betaAnalytics).where(eq(betaAnalytics.actorId, actorId)); }

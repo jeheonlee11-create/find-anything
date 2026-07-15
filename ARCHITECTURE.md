@@ -1,5 +1,13 @@
 # Architecture
 
+## Private-beta readiness update
+
+Find Anything uses Next.js-compatible Vinext output on Cloudflare Workers, Sites-owned ChatGPT authentication, D1 with Drizzle migrations, Google OAuth state plus PKCE, AES-GCM token encryption, complete Drive inventory reconciliation, structural Docs/Sheets/Slides extraction, deterministic literal search, permission revalidation, exact citations, retrieval traces, and receipts. Every workspace-facing route derives the actor server-side and checks membership before loading connector or file data.
+
+Private-beta controls add hashed-email invitations, active/disabled/revoked users, server-side access enforcement, first-party D1 analytics, contextual feedback with optional evidence inclusion, operation rate limits, access-change audit records, owner-only Sites access, health/readiness checks, and an admin dashboard without a file-content viewer. Ordinary analytics reject fields whose names indicate queries, filenames, excerpts, content, OAuth data, authorization, tokens, or secrets.
+
+The remaining production dependency is custom-domain Google OAuth. Semantic search and additional connectors remain deliberately disabled.
+
 ## Current deployable demo
 
 - Next.js 16, React 19, TypeScript, vinext, OpenAI Sites/Cloudflare Worker runtime.

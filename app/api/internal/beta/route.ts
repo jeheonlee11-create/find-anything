@@ -22,8 +22,8 @@ export async function PATCH(request: Request) {
   const admin = await requireBetaAdmin(request);
   if (admin instanceof NextResponse) return admin;
   const body = await request.json().catch(() => null) as { actorId?: unknown; status?: unknown } | null;
-  if (typeof body?.actorId !== "string" || !["active", "disabled"].includes(String(body.status))) return NextResponse.json({ error: { code: "INVALID_UPDATE", message: "Invalid beta account update." } }, { status: 400 });
+  if (typeof body?.actorId !== "string" || !["active", "disabled", "revoked"].includes(String(body.status))) return NextResponse.json({ error: { code: "INVALID_UPDATE", message: "Invalid beta account update." } }, { status: 400 });
   if (body.actorId === admin.actorId && body.status === "disabled") return NextResponse.json({ error: { code: "INVALID_UPDATE", message: "You cannot disable your own admin account." } }, { status: 400 });
-  await setBetaUserStatus(body.actorId, body.status as "active" | "disabled");
+  await setBetaUserStatus(body.actorId, body.status as "active" | "disabled" | "revoked", admin.actorId);
   return NextResponse.json({ updated: true });
 }

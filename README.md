@@ -1,4 +1,4 @@
-# Vrtbrate
+# Find Anything
 
 ## Open the updated local website
 
@@ -6,7 +6,7 @@
 
 You can also double-click `Open Find Anything.webloc` in this project folder. The stable `/app` address lists your workspaces, so it does not depend on a workspace ID.
 
-Vrtbrate is a permission-aware retrieval platform for AI agents. Week 1 focuses only on authenticated users, workspaces, Google Drive authorization, durable indexing, connection status, authorized file visibility, and safe disconnect.
+Find Anything is a permission-aware retrieval product for exact search across authorized Google Drive files.
 
 The repository currently provides:
 

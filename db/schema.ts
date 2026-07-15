@@ -354,7 +354,7 @@ export const betaInvitations = sqliteTable(
     id: text("id").primaryKey(),
     emailHash: text("email_hash").notNull(),
     status: text("status", {
-      enum: ["approved", "revoked", "expired"],
+      enum: ["pending", "approved", "revoked", "expired"],
     }).notNull(),
     cohort: text("cohort").notNull(),
     expiresAt: text("expires_at").notNull(),
@@ -371,7 +371,7 @@ export const betaUsers = sqliteTable(
   {
     actorId: text("actor_id").primaryKey(),
     emailHash: text("email_hash").notNull(),
-    status: text("status", { enum: ["active", "disabled"] }).notNull(),
+    status: text("status", { enum: ["pending", "active", "disabled", "revoked"] }).notNull(),
     role: text("role", { enum: ["tester", "admin"] }).notNull(),
     invitedAt: text("invited_at").notNull(),
     activatedAt: text("activated_at").notNull(),
@@ -391,8 +391,14 @@ export const betaFeedback = sqliteTable(
     workspaceId: text("workspace_id").notNull(),
     category: text("category").notNull(),
     query: text("query").notNull(),
+    searchMode: text("search_mode"),
     traceId: text("trace_id"),
+    receiptId: text("receipt_id"),
+    selectedResultId: text("selected_result_id"),
     resultIdsJson: text("result_ids_json").notNull(),
+    evidenceExcerpt: text("evidence_excerpt"),
+    includeEvidenceExcerpt: integer("include_evidence_excerpt", { mode: "boolean" }).notNull().default(false),
+    applicationVersion: text("application_version").notNull().default("unknown"),
     comment: text("comment").notNull(),
     status: text("status", { enum: ["new", "triaged", "resolved"] }).notNull(),
     createdAt: text("created_at").notNull(),
@@ -433,4 +439,16 @@ export const operationRateLimits = sqliteTable(
       "operation_rate_limits_actor_operation_window_idx",
     ).on(t.actorId, t.operation, t.windowStart),
   }),
+);
+export const betaAccessAudit = sqliteTable(
+  "beta_access_audit",
+  {
+    id: text("id").primaryKey(),
+    adminActorId: text("admin_actor_id").notNull(),
+    targetActorId: text("target_actor_id"),
+    invitationId: text("invitation_id"),
+    action: text("action").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => ({ createdIdx: index("beta_access_audit_created_idx").on(t.createdAt) }),
 );

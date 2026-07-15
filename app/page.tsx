@@ -92,9 +92,9 @@ const files = await find.search({
   return (
     <main>
       <nav className="nav shell" aria-label="Main navigation">
-        <a className="brand" href="#top" aria-label="Vrtbrate home">
-          <span className="brand-mark">V</span>
-          <span>Vrtbrate</span>
+        <a className="brand" href="#top" aria-label="Find Anything home">
+          <span className="brand-mark">F</span>
+          <span>Find Anything</span>
         </a>
         <div className="nav-links">
           <a href="#how">How it works</a>
@@ -284,7 +284,7 @@ const files = await find.search({
         <div className="shell cta-inner"><div><div className="eyebrow dark"><span className="pulse" /> Verify retrieval before trusting the answer</div><h2>Know what your agent searched.<br />Prove what it found.</h2></div><a className="button button-light" href="#playground">Inspect the prototype <span>→</span></a></div>
       </section>
 
-      <footer className="footer shell"><a className="brand" href="#top"><span className="brand-mark">V</span><span>Vrtbrate</span></a><p>Permission-aware retrieval control plane for AI agents.</p><div><a href="/docs">API docs</a><a href="/status">Status</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/support">Support</a><a href="/trust">Trust</a></div><span>© 2026</span></footer>
+      <footer className="footer shell"><a className="brand" href="#top"><span className="brand-mark">F</span><span>Find Anything</span></a><p>Exact, permission-aware retrieval for authorized files.</p><div><a href="/docs">API docs</a><a href="/status">Status</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/support">Support</a><a href="/trust">Trust</a></div><span>© 2026</span></footer>
     </main>
   );
 }

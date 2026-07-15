@@ -45,7 +45,7 @@ test("renders public product, growth, help, and trust routes with truthful discl
     ["/status", /Demo retrieval is operational/i],
     ["/beta", /Waitlist not yet connected/i],
     ["/mcp", /Implemented locally/i],
-    ["/google-drive", /Google Drive · Week 1/i],
+    ["/google-drive", /Google Drive · Private beta/i],
     ["/use-cases", /Concrete workflows/i],
     ["/changelog", /without inflated claims/i],
     ["/contact", /Provider setup required/i],
@@ -76,7 +76,7 @@ test("signup, sign-in, protected application, and sign-out use the host session"
   });
   assert.equal(authenticated.status, 200);
   const html = await authenticated.text();
-  assert.match(html, /Create your Vrtbrate workspace/i);
+  assert.match(html, /Create your Find Anything workspace/i);
   assert.match(html, /Demo Developer/);
   assert.match(html, /signout-with-chatgpt/);
 });
@@ -283,24 +283,17 @@ test("health and readiness fail safely when production dependencies are missing"
   assert.ok(body.configuration.missingNames.includes("GOOGLE_CLIENT_ID"));
 });
 
-test("analytics rejects invalid events and accepts valid events without pretending persistence", async () => {
+test("analytics requires authentication and uses privacy-safe first-party persistence", async () => {
   const invalid = await request("/api/analytics", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: "file_content_uploaded", anonymousId: "a" }),
   });
-  assert.equal(invalid.status, 400);
-  const valid = await request("/api/analytics", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      name: "landing_page_viewed",
-      anonymousId: "anonymous-test",
-      properties: { origin: "ui", query: "private text" },
-    }),
-  });
-  assert.equal(valid.status, 202);
-  assert.equal((await valid.json()).accepted, false);
+  assert.equal(invalid.status, 401);
+  const source = await readFile(new URL("../app/api/analytics/route.ts", import.meta.url), "utf8");
+  assert.match(source, /requireApiActor/);
+  assert.match(source, /recordBetaEvent/);
+  assert.doesNotMatch(source, /POSTHOG|capture\//i);
 });
 
 test("founder metrics fail closed when admin authorization is absent", async () => {

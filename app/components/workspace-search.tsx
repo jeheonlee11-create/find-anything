@@ -260,7 +260,7 @@ export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
               Next
             </button>
           </div>
-          <BetaFeedback workspaceId={workspaceId} query={data.query} traceId={data.traceId} resultIds={data.results.map((result) => result.id)} />
+          <BetaFeedback workspaceId={workspaceId} query={data.query} searchMode={data.mode} traceId={data.traceId} receiptId={data.receiptId} resultIds={data.results.map((result) => result.id)} />
         </>
       )}
     </section>

@@ -15,7 +15,7 @@ export async function generateMetadata(): Promise<Metadata> {
   if (process.env.NEXT_PUBLIC_SITE_URL) {
     try { origin = new URL(process.env.NEXT_PUBLIC_SITE_URL).origin; } catch { origin = requestOrigin; }
   }
-  const title = "Vrtbrate — Permission-aware retrieval for AI agents";
+  const title = "Find Anything — Exact, permission-aware Drive search";
   const description = "Connect every workspace once. Give any agent permission-aware, coverage-accounted, and verifiable access to private files.";
 
   return {
@@ -28,7 +28,7 @@ export async function generateMetadata(): Promise<Metadata> {
       title,
       description,
       type: "website",
-      images: [{ url: `${origin}/og-control-plane.png`, width: 1662, height: 946, alt: "Vrtbrate — permission-aware retrieval for AI agents" }],
+      images: [{ url: `${origin}/og-control-plane.png`, width: 1662, height: 946, alt: "Find Anything — exact, permission-aware Drive search" }],
     },
     twitter: { card: "summary_large_image", title, description, images: [`${origin}/og-control-plane.png`] },
   };
