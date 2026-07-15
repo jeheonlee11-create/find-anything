@@ -1,6 +1,6 @@
 # Google Drive MVP technical plan
 
-This document is an implementation plan. The connector is not live.
+The Phase 1 server implementation now exists, but the connector is not live until the manual Google Cloud and hosted-secret setup below is completed and an end-to-end sync succeeds.
 
 1. **OAuth flow** — create a Google Cloud OAuth application, use Authorization Code with PKCE, verify `state`, and exchange the code server-side.
 2. **Scopes** — begin with `drive.file` and Google Picker for selected folders or files. Evaluate `drive.readonly` only if whole-Drive discovery is essential; broad scopes require Google verification and may require a security assessment.
@@ -18,17 +18,31 @@ This document is an implementation plan. The connector is not live.
 14. **Query-time verification** — resolve actor identity and verify current access before a candidate can become returned evidence.
 15. **Failures and retries** — use idempotent jobs, bounded exponential backoff, dead-letter states, visible indexing failures, and operator retry controls.
 
-## Required credentials
+## Implemented now
+
+- Authenticated connect and callback routes
+- Authorization Code flow with state and PKCE
+- AES-GCM encryption for OAuth credentials
+- D1/Drizzle migrations for users, workspaces, memberships, connectors, OAuth state, source files, versions, structural units, and sync runs
+- Complete `files.list` pagination with explicit metadata, owners, permissions, parents, links, checksums, size, and modified time
+- Native Google Docs and Slides plain-text export, Sheets first-sheet CSV export, and serverless PDF page extraction
+- Access-token refresh and encrypted refresh-token storage
+- File-level indexing status, extraction failure tracking, and sync-run totals
+
+Implemented locally: query-time Drive inventory verification, workspace-isolated durable retrieval, structural extraction with labeled export fallback, incremental add/update/remove reconciliation, durable traces and receipts, authenticated REST search, and MCP. Background scheduling and production deployment remain out of scope.
+
+## Required credentials and manual Google setup
 
 See `.env.example`. Real secrets must be configured in the hosting environment and never committed.
 
 ## Production dependencies still required
 
-- PostgreSQL-compatible persistence and migrations
-- encrypted connector credential store
-- background-job runner
+- A Sites D1 `DB` binding and applied migration
+- hosted `TOKEN_ENCRYPTION_KEY` secret (32-byte hex or base64url)
 - Google OAuth consent and verification
-- keyword index and pgvector-compatible adapter
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and exact `GOOGLE_REDIRECT_URI`
+- restricted-scope verification/security assessment as required for `drive.readonly`
+- background-job runner before large production Drives
+- keyword index and pgvector-compatible adapter for later phases
 - connector reconciliation and Drive changes processing
 - security review, abuse prevention, audit retention, and operational monitoring
-

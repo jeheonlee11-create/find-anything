@@ -1,9 +1,10 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { runSampleRetrieval } from "@/lib/retrieval/core";
 import type { RetrievalFilters, RetrievalResponse, SearchMode } from "@/lib/retrieval/types";
 import { publicUrls } from "@/lib/config/urls";
+import { trackEvent } from "@/lib/analytics/client";
 
 const initialQuery = "Find the document where I discussed air pollution and Detroit.";
 const sourceNames = [{name:"Google Drive",status:"Sample corpus"},{name:"Microsoft 365",status:"Planned"},{name:"Notion",status:"Planned"},{name:"Dropbox",status:"Planned"}];
@@ -19,6 +20,7 @@ export default function Home() {
   const [activeLayer, setActiveLayer] = useState<"results"|"coverage"|"trace">("results");
   const [response, setResponse] = useState<RetrievalResponse>(()=>runSampleRetrieval({query:initialQuery,mode:"ranked"}));
   const [filters, setFilters] = useState<RetrievalFilters>({});
+  useEffect(()=>{trackEvent("landing_page_viewed",{origin:"ui",plan:"demo",onboardingStage:"landing"})},[]);
 
   const code = useMemo(() => {
     if (codeTab === "mcp") {
@@ -54,9 +56,12 @@ const files = await find.search({
     const clean = query.trim();
     if (!clean) return;
     setSearching(true);
+    trackEvent("first_search_started",{workspaceId:"ws_synthetic_demo",plan:"demo",searchMode:searchMode,origin:"ui",fileCountBucket:"100-499"});
     window.setTimeout(() => {
       setSubmitted(clean);
-      setResponse(runSampleRetrieval({query:clean,mode:mapMode(searchMode),filters,page:1,pageSize:searchMode==="exhaustive"?25:3}));
+      setResponse(runSampleRetrieval({query:clean,mode:mapMode(searchMode),filters,page:1,pageSize:20}));
+      trackEvent(searchMode==="exhaustive"?"find_all_used":searchMode==="exact"?"exact_evidence_used":searchMode==="newest"?"newest_version_used":"best_matches_used",{workspaceId:"ws_synthetic_demo",plan:"demo",searchMode,origin:"ui",resultCountBucket:"20+"});
+      trackEvent("first_search_completed",{workspaceId:"ws_synthetic_demo",plan:"demo",searchMode,origin:"ui",latencyBucket:"under_1s",completenessStatus:"incomplete"});
       setActiveLayer("results");
       setSearching(false);
     }, 420);
@@ -69,6 +74,7 @@ const files = await find.search({
   }
 
   function exportReceipt() {
+    trackEvent("receipt_exported",{workspaceId:"ws_synthetic_demo",plan:"demo",searchMode,origin:"ui",completenessStatus:response.coverage.completenessStatus});
     const receipt = {
       ...response.receipt,
       notice: "Generated from the repository sample corpus. This record is exportable but is not persisted or immutable.",
@@ -81,23 +87,24 @@ const files = await find.search({
     URL.revokeObjectURL(href);
   }
 
-  function changePage(page:number){setResponse(runSampleRetrieval({query:submitted,mode:mapMode(searchMode),filters,page,pageSize:searchMode==="exhaustive"?25:3}));}
+  function changePage(page:number){trackEvent("pagination_used",{workspaceId:"ws_synthetic_demo",plan:"demo",searchMode,origin:"ui"});setResponse(runSampleRetrieval({query:submitted,mode:mapMode(searchMode),filters,page,pageSize:20}));}
 
   return (
     <main>
       <nav className="nav shell" aria-label="Main navigation">
-        <a className="brand" href="#top" aria-label="Find Anything home">
-          <span className="brand-mark">F</span>
-          <span>Find Anything</span>
+        <a className="brand" href="#top" aria-label="Vrtbrate home">
+          <span className="brand-mark">V</span>
+          <span>Vrtbrate</span>
         </a>
         <div className="nav-links">
           <a href="#how">How it works</a>
           <a href="#playground">Playground</a>
           <a href="/docs">API docs</a>
+          <a href="/pricing">Pricing</a>
           <a href="/trust">Trust</a>
         </div>
-        <a className="button button-small" href="#playground">
-          Start building <span>↗</span>
+        <a className="button button-small" href="/app">
+          Sign in <span>↗</span>
         </a>
       </nav>
 
@@ -109,7 +116,7 @@ const files = await find.search({
             Connect Google Drive once. Let any AI agent search your organization’s files with exact citations, permission checks, and proof of what was not searched.
           </p>
           <div className="hero-actions">
-            <a className="button" href="#playground">Create a workspace <span>→</span></a>
+            <a className="button" href="/app">Create a workspace <span>→</span></a>
             <a className="text-link" href="/docs">Read the API docs <span>↗</span></a>
           </div>
           <p className="microcopy">Prove what was searched · Report what was missed · Cite exact evidence</p>
@@ -127,7 +134,7 @@ const files = await find.search({
               <p>Find the document where I discussed air pollution and Detroit.</p>
             </div>
             <div className="search-trace">
-              <span>5 indexed sample files searched</span>
+              <span>101 indexed synthetic files searched</span>
               <span className="trace-line" />
               <span>0.8s</span>
             </div>
@@ -188,7 +195,7 @@ const files = await find.search({
             </aside>
 
             <div className="console-main">
-              <div className="console-top"><div><span>Retrieval playground</span><small>Sample workspace · 6 local file records</small></div><span className="read-only">Not live Drive data</span></div>
+              <div className="console-top"><div><span>Retrieval playground</span><small>Synthetic workspace · 105 file records</small></div><span className="read-only">Not live Drive data</span></div>
               <form className="search-form" onSubmit={runSearch}>
                 <div className="mode-selector" aria-label="Search mode">
                   {([['ranked','Best matches'],['exhaustive','Find all'],['exact','Exact evidence'],['newest','Newest version']] as const).map(([value, label]) => <button type="button" key={value} className={searchMode === value ? "active" : ""} onClick={() => setSearchMode(value)}>{label}</button>)}
@@ -207,7 +214,7 @@ const files = await find.search({
                 <div className="layer-tabs" role="tablist" aria-label="Retrieval output layers">
                   <button className={activeLayer==="results"?"active":""} onClick={()=>setActiveLayer("results")}>1 · Search Results <span>{response.totalMatches}</span></button>
                   <button className={activeLayer==="coverage"?"active":""} onClick={()=>setActiveLayer("coverage")}>2 · Coverage Report <span>{response.coverage.completenessStatus}</span></button>
-                  <button className={activeLayer==="trace"?"active":""} onClick={()=>setActiveLayer("trace")}>3 · Retrieval Trace <span>simulated</span></button>
+                  <button className={activeLayer==="trace"?"active":""} onClick={()=>{setActiveLayer("trace");trackEvent("trace_viewed",{workspaceId:"ws_synthetic_demo",plan:"demo",searchMode,origin:"ui",completenessStatus:response.coverage.completenessStatus})}}>3 · Retrieval Trace <span>simulated</span></button>
                 </div>
                 {activeLayer==="results" && <div className="layer-panel">
                   <div className="results-head"><p><b>{response.totalMatches} matching sample file{response.totalMatches===1?"":"s"} found.</b> {response.totalMatches?`Showing ${response.results.length} on page ${response.page}.`:"Try a term from the sample corpus."}</p><span>{searchMode === "exhaustive" ? "Find All prototype" : searchMode === "exact" ? "Exact evidence prototype" : searchMode === "newest" ? "Newest-version prototype" : "Best Matches"}</span></div>
@@ -277,7 +284,7 @@ const files = await find.search({
         <div className="shell cta-inner"><div><div className="eyebrow dark"><span className="pulse" /> Verify retrieval before trusting the answer</div><h2>Know what your agent searched.<br />Prove what it found.</h2></div><a className="button button-light" href="#playground">Inspect the prototype <span>→</span></a></div>
       </section>
 
-      <footer className="footer shell"><a className="brand" href="#top"><span className="brand-mark">F</span><span>Find Anything</span></a><p>Permission-aware retrieval control plane for AI agents.</p><div><a href="/docs">API docs</a><a href="#playground">Prototype</a><a href="/trust">Trust</a></div><span>© 2026</span></footer>
+      <footer className="footer shell"><a className="brand" href="#top"><span className="brand-mark">V</span><span>Vrtbrate</span></a><p>Permission-aware retrieval control plane for AI agents.</p><div><a href="/docs">API docs</a><a href="/status">Status</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/support">Support</a><a href="/trust">Trust</a></div><span>© 2026</span></footer>
     </main>
   );
 }

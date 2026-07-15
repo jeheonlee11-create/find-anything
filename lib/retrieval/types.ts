@@ -1,6 +1,6 @@
 export type SourcePlatform = "google_drive" | "microsoft_365" | "notion" | "dropbox" | "box";
 export type SearchMode = "ranked" | "find_all" | "exact_evidence" | "newest_version";
-export type CompletenessStatus = "complete" | "partial" | "unknown";
+export type CompletenessStatus = "complete" | "likely_complete" | "incomplete" | "unknown";
 export type IndexStatus = "indexed" | "awaiting_index" | "failed";
 export type PermissionStatus = "allowed" | "denied" | "unknown";
 
@@ -24,9 +24,8 @@ export interface RetrievalQuery { id: string; workspaceId: string; actorId: stri
 export interface RetrievalCandidate { fileId: string; unitId: string; origin: "keyword" | "semantic" | "metadata"; keywordScore: number; semanticScore: number | null; finalScore: number; permissionStatus: PermissionStatus; matchedTerms: string[]; }
 export interface RetrievalResult { file: SourceFile; evidence: ExtractedUnit; score: number; rank: number; whyMatched: string; permissionStatus: PermissionStatus; citation: string; openUrl: string | null; prototype: boolean; }
 
-export interface CoverageReport { accessibleFiles: number; indexedFiles: number; searchedFiles: number; matchedFiles: number; excludedByFilter: number; permissionDenied: number; extractionFailed: number; awaitingIndex: number; complete: boolean; completenessStatus: CompletenessStatus; warnings: string[]; }
+export interface CoverageReport { totalKnownFiles: number; accessibleFiles: number; indexedFiles: number; searchedFiles: number; candidateFiles: number; matchedFiles: number; returnedFiles: number; excludedByFilter: number; permissionDenied: number; extractionFailed: number; awaitingIndex: number; connectorSyncStatus: "current"|"syncing"|"stale"|"unknown"; complete: boolean; completenessStatus: CompletenessStatus; incompleteReasons: string[]; warnings: string[]; }
 export interface RetrievalStage { name: string; status: "executed" | "simulated" | "planned"; candidateCountBefore: number; candidateCountAfter: number; latencyMs: number; detail: string; }
 export interface RetrievalTrace { traceId: string; prototype: boolean; workspace: string; actor: string; originalQuery: string; interpretedQuery: string; expandedTerms: string[]; filters: RetrievalFilters; searchMode: SearchMode; keywordCandidates: number; semanticCandidates: number | null; mergedCandidates: number; permissionDecisions: { fileId: string; status: PermissionStatus; reason: string }[]; exclusions: { fileId: string; reason: string }[]; stages: RetrievalStage[]; corpusSnapshotAt: string; returnedEvidenceIds: string[]; completenessStatus: CompletenessStatus; }
 export interface RetrievalReceipt { receiptId: string; traceId: string; prototype: boolean; label: "Exportable retrieval record"; query: string; searchMode: SearchMode; actor: string; workspace: string; corpusSnapshotAt: string; sourceConnectors: SourcePlatform[]; filters: RetrievalFilters; coverage: CoverageReport; failures: string[]; exclusions: { fileId: string; reason: string }[]; returnedEvidence: { fileId: string; evidenceId: string; citation: string }[]; retrievalConfiguration: { keyword: string; semantic: string; reranker: string }; createdAt: string; }
 export interface RetrievalResponse { query: RetrievalQuery; results: RetrievalResult[]; totalMatches: number; page: number; pageSize: number; totalPages: number; coverage: CoverageReport; trace: RetrievalTrace; receipt: RetrievalReceipt; prototype: true; sampleCorpus: true; }
-

@@ -1,0 +1,1 @@
+import {NextResponse} from "next/server";export async function POST(){return NextResponse.json({error:{code:"WAITLIST_NOT_CONFIGURED",message:"Email verification, consent storage, anti-spam protection, and beta terms are required before collection."}},{status:503})}

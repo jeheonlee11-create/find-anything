@@ -1,5 +1,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import {betaAccess} from "@/lib/beta/repository";
+import {pseudonymousActorId} from "@/lib/auth/api-authorization";
 
 export type ChatGPTUser = {
   displayName: string;
@@ -15,11 +17,22 @@ const PERCENT_ENCODED_UTF8 = "percent-encoded-utf-8";
 const SIGN_IN_PATH = "/signin-with-chatgpt";
 const SIGN_OUT_PATH = "/signout-with-chatgpt";
 const CALLBACK_PATH = "/callback";
+const LOCAL_DEVELOPMENT_EMAIL = "local-oauth-tester@localhost.invalid";
+const LOCAL_DEVELOPMENT_NAME = "Local OAuth Tester";
 
 export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
   const requestHeaders = await headers();
   const email = requestHeaders.get(USER_EMAIL_HEADER);
-  if (!email) return null;
+  if (!email) {
+    const host =
+      requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
+    if (!isLocalDevelopmentHost(host)) return null;
+    return {
+      displayName: LOCAL_DEVELOPMENT_NAME,
+      email: LOCAL_DEVELOPMENT_EMAIL,
+      fullName: LOCAL_DEVELOPMENT_NAME,
+    };
+  }
 
   const encodedFullName = requestHeaders.get(USER_FULL_NAME_HEADER);
   const fullName =
@@ -43,6 +56,7 @@ export async function requireChatGPTUser(
 
   redirect(chatGPTSignInPath(returnTo));
 }
+export async function requireBetaChatGPTUser(returnTo:string){const user=await requireChatGPTUser(returnTo),access=await betaAccess({actorId:await pseudonymousActorId(user.email.toLowerCase()),email:user.email.toLowerCase()});if(!access.allowed)redirect("/beta/access-required");return{user,access}}
 
 export function chatGPTSignInPath(returnTo: string): string {
   const safeReturnTo = safeRelativeReturnPath(returnTo);
@@ -74,6 +88,19 @@ function isReservedAuthPath(pathname: string): boolean {
     pathname === SIGN_IN_PATH ||
     pathname === SIGN_OUT_PATH ||
     pathname === CALLBACK_PATH
+  );
+}
+
+function isLocalDevelopmentHost(host: string | null): boolean {
+  if (process.env.NODE_ENV !== "development" || !host) return false;
+  const normalizedHost = host.toLowerCase();
+  return (
+    normalizedHost === "localhost" ||
+    normalizedHost.startsWith("localhost:") ||
+    normalizedHost === "127.0.0.1" ||
+    normalizedHost.startsWith("127.0.0.1:") ||
+    normalizedHost === "[::1]" ||
+    normalizedHost.startsWith("[::1]:")
   );
 }
 

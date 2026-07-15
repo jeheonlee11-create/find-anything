@@ -1,0 +1,238 @@
+openapi: 3.1.0
+info:
+  title: Find Anything API
+  version: 1.0.0-beta
+  description: Workspace-isolated retrieval over real indexed connector records.
+servers:
+  - url: https://app.findanything.dev
+security:
+  - bearerApiKey: []
+components:
+  securitySchemes:
+    bearerApiKey: { type: http, scheme: bearer }
+  parameters:
+    RequestId: { in: header, name: X-Request-ID, schema: { type: string } }
+    Cursor: { in: query, name: cursor, schema: { type: string } }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            {
+              code: { type: string },
+              message: { type: string },
+              requestId: { type: string },
+            }
+    SearchRequest:
+      type: object
+      required: [query]
+      properties:
+        workspaceId:
+          {
+            type: string,
+            description: Must match the API key workspace when supplied.,
+          }
+        query: { type: string, minLength: 1, maxLength: 500 }
+        mode: { type: string, enum: [best, all], default: best }
+        fileType:
+          { type: string, enum: [all, docs, slides, sheets, pdf], default: all }
+        cursor: { type: string }
+        pageSize: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Citation:
+      type: object
+      required:
+        [
+          fileId,
+          unitId,
+          unitType,
+          structuralLocation,
+          excerpt,
+          contentHash,
+          retrievedAt,
+        ]
+      properties:
+        fileId: { type: string }
+        sourceUrl: { type: [string, "null"], format: uri }
+        unitId: { type: string }
+        unitType: { type: string }
+        structuralLocation: { type: object, additionalProperties: true }
+        excerpt: { type: string }
+        contentHash:
+          { type: string, description: SHA-256 hash of the extracted unit. }
+        retrievedAt: { type: string, format: date-time }
+    SearchResponse:
+      type: object
+      required: [results, totalMatches, searchId, traceId, receiptId, retrieval]
+      properties:
+        totalMatches: { type: integer }
+        pageSize: { type: integer }
+        showingFrom: { type: integer }
+        showingTo: { type: integer }
+        nextCursor: { type: [string, "null"] }
+        matchingPolicyVersion: { type: string }
+        searchId: { type: string }
+        traceId: { type: string }
+        receiptId: { type: string }
+        retrieval:
+          type: object
+          properties:
+            { kind: { const: literal }, semanticPaused: { const: true } }
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              sourceUrl: { type: [string, "null"], format: uri }
+              citations:
+                {
+                  type: array,
+                  items: { $ref: "#/components/schemas/Citation" },
+                }
+paths:
+  /v1/search:
+    post:
+      operationId: searchFiles
+      parameters: [{ $ref: "#/components/parameters/RequestId" }]
+      requestBody:
+        required: true
+        content:
+          {
+            application/json:
+              { schema: { $ref: "#/components/schemas/SearchRequest" } },
+          }
+      responses:
+        "200":
+          description: Literal results with exact citations, coverage, trace ID, and receipt ID.
+          headers: { X-Request-ID: { schema: { type: string } } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SearchResponse" }
+        "400":
+          {
+            description: Invalid request,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Error" } },
+              },
+          }
+        "401": { description: Invalid API key }
+        "403": { description: Wrong workspace }
+        "409":
+          {
+            description: Google Drive is not connected for the API-key workspace,
+          }
+        "503":
+          {
+            description: Current Drive permissions could not be revalidated; no results returned,
+          }
+        "429": { description: Rate limited }
+  /v1/searches/{searchId}:
+    get:
+      operationId: getSearch
+      parameters:
+        [{ in: path, name: searchId, required: true, schema: { type: string } }]
+      responses:
+        {
+          "200": { description: Durable search record },
+          "404": { description: Not found },
+        }
+  /v1/searches/{searchId}/results:
+    get:
+      operationId: getSearchResults
+      parameters:
+        - { in: path, name: searchId, required: true, schema: { type: string } }
+        - { $ref: "#/components/parameters/Cursor" }
+        - {
+            in: query,
+            name: pageSize,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 20 },
+          }
+      responses:
+        {
+          "200": { description: Cursor-paginated stored results },
+          "404": { description: Not found },
+        }
+  /v1/retrieval-traces/{traceId}:
+    get:
+      operationId: getRetrievalTrace
+      parameters:
+        [{ in: path, name: traceId, required: true, schema: { type: string } }]
+      responses:
+        {
+          "200": { description: Real runtime retrieval trace },
+          "404": { description: Not found },
+        }
+  /v1/search-receipts/{receiptId}:
+    get:
+      operationId: getSearchReceipt
+      parameters:
+        [
+          {
+            in: path,
+            name: receiptId,
+            required: true,
+            schema: { type: string },
+          },
+        ]
+      responses:
+        {
+          "200": { description: Durable exportable receipt },
+          "404": { description: Not found },
+        }
+  /v1/workspaces/{workspaceId}/coverage:
+    get:
+      operationId: getCoverage
+      parameters:
+        [
+          {
+            in: path,
+            name: workspaceId,
+            required: true,
+            schema: { type: string },
+          },
+        ]
+      responses:
+        {
+          "200": { description: Workspace indexing coverage },
+          "403": { description: Wrong workspace },
+        }
+  /v1/files/{fileId}/citations:
+    get:
+      operationId: getFileCitations
+      parameters:
+        [{ in: path, name: fileId, required: true, schema: { type: string } }]
+      responses:
+        {
+          "200": { description: Exact structural citations },
+          "404": { description: Not found },
+        }
+  /v1/files/{fileId}/relationships:
+    get:
+      operationId: getFileRelationships
+      parameters:
+        [{ in: path, name: fileId, required: true, schema: { type: string } }]
+      responses: { "200": { description: Explainable inferred relationships } }
+    patch:
+      operationId: correctFileRelationship
+      parameters:
+        [{ in: path, name: fileId, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [relationshipId, status]
+              properties:
+                {
+                  relationshipId: { type: string },
+                  status:
+                    { type: string, enum: [confirmed, rejected, unreviewed] },
+                }
+      responses: { "204": { description: Correction recorded } }

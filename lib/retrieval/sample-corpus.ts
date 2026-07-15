@@ -1,24 +1,33 @@
 import type { ExtractedUnit, PermissionSnapshot, SourceFile } from "./types";
 
-export const SAMPLE_WORKSPACE_ID = "ws_sample_air_quality";
-export const SAMPLE_ACTOR_ID = "actor_sample_user";
+export const SAMPLE_WORKSPACE_ID = "ws_synthetic_demo";
+export const SAMPLE_ACTOR_ID = "actor_demo_user";
+const modifiedAt = "2026-07-11T14:22:10Z";
 
-export const sampleFiles: SourceFile[] = [
-  { id:"drive_doc_air_essay", workspaceId:SAMPLE_WORKSPACE_ID, source:"google_drive", name:"Environmental Justice Scholarship Essay", mimeType:"application/vnd.google-apps.document", owner:"Jordan Lee", folder:"/Applications/Scholarships", modifiedAt:"2026-04-18T14:22:10Z", versionId:"ver_air_3", permissionSnapshotId:"perm_air", indexStatus:"indexed", extractionStatus:"complete", unitCount:12 },
-  { id:"drive_slide_air_research", workspaceId:SAMPLE_WORKSPACE_ID, source:"google_drive", name:"Air Quality Research Presentation", mimeType:"application/vnd.google-apps.presentation", owner:"Jordan Lee", folder:"/Research/Air Quality", modifiedAt:"2026-04-22T09:14:00Z", versionId:"ver_slide_2", permissionSnapshotId:"perm_slide", indexStatus:"indexed", extractionStatus:"complete", unitCount:24 },
-  { id:"drive_pdf_agu_notes", workspaceId:SAMPLE_WORKSPACE_ID, source:"google_drive", name:"AGU Conference Research Notes", mimeType:"application/pdf", owner:"Jordan Lee", folder:"/Research/Conference", modifiedAt:"2026-03-30T18:06:00Z", versionId:"ver_pdf_1", permissionSnapshotId:"perm_pdf", indexStatus:"indexed", extractionStatus:"complete", unitCount:8 },
-  { id:"drive_slide_growth", workspaceId:SAMPLE_WORKSPACE_ID, source:"google_drive", name:"Q4 Customer Growth Review", mimeType:"application/vnd.google-apps.presentation", owner:"Maya Chen", folder:"/Company/Revenue", modifiedAt:"2026-06-20T13:00:00Z", versionId:"ver_growth_4", permissionSnapshotId:"perm_growth", indexStatus:"indexed", extractionStatus:"complete", unitCount:18 },
-  { id:"drive_sheet_revenue", workspaceId:SAMPLE_WORKSPACE_ID, source:"google_drive", name:"2026 Revenue Forecast", mimeType:"application/vnd.google-apps.spreadsheet", owner:"Maya Chen", folder:"/Company/Revenue", modifiedAt:"2026-06-21T15:45:00Z", versionId:"ver_revenue_6", permissionSnapshotId:"perm_revenue", indexStatus:"indexed", extractionStatus:"complete", unitCount:32 },
-  { id:"drive_pdf_failed", workspaceId:SAMPLE_WORKSPACE_ID, source:"google_drive", name:"Scanned Field Notebook", mimeType:"application/pdf", owner:"Jordan Lee", folder:"/Research/Raw", modifiedAt:"2026-02-01T10:00:00Z", versionId:"ver_failed_1", permissionSnapshotId:"perm_failed", indexStatus:"failed", extractionStatus:"failed", unitCount:0 },
+function statusFor(index:number):Pick<SourceFile,"indexStatus"|"extractionStatus"> {
+  if(index===58 || index===103) return {indexStatus:"awaiting_index",extractionStatus:"partial"};
+  if(index===59 || index===104) return {indexStatus:"failed",extractionStatus:"failed"};
+  return {indexStatus:"indexed",extractionStatus:"complete"};
+}
+
+function makeFile(index:number,kind:"document"|"presentation"|"spreadsheet"|"pdf"):SourceFile {
+  const id=`demo_${kind}_${String(index+1).padStart(3,"0")}`;
+  const mimeType=kind==="document"?"application/vnd.google-apps.document":kind==="presentation"?"application/vnd.google-apps.presentation":kind==="spreadsheet"?"application/vnd.google-apps.spreadsheet":"application/pdf";
+  const name=kind==="document"?`Detroit Air Pollution Research Note ${String(index+1).padStart(2,"0")}`:kind==="presentation"?`Air Quality Presentation ${String(index-39).padStart(2,"0")}`:kind==="spreadsheet"?`Air Sensor Measurements ${String(index-49).padStart(2,"0")}`:`Environmental Justice Report ${String(index-59).padStart(2,"0")}`;
+  return {id,workspaceId:SAMPLE_WORKSPACE_ID,source:"google_drive",name,mimeType,owner:index%2?"Jordan Lee":"Maya Chen",folder:kind==="document"?"/Research/Detroit":kind==="presentation"?"/Research/Slides":kind==="spreadsheet"?"/Research/Data":"/Research/Reports",modifiedAt,versionId:`ver_${id}`,permissionSnapshotId:`perm_${id}`,...statusFor(index),unitCount:statusFor(index).indexStatus==="indexed"?1:0};
+}
+
+export const sampleFiles:SourceFile[]=[
+  ...Array.from({length:60},(_,i)=>makeFile(i,"document")),
+  ...Array.from({length:15},(_,i)=>makeFile(i+60,"presentation")),
+  ...Array.from({length:15},(_,i)=>makeFile(i+75,"spreadsheet")),
+  ...Array.from({length:15},(_,i)=>makeFile(i+90,"pdf")),
 ];
 
-export const sampleUnits: ExtractedUnit[] = [
-  { id:"unit_air_paragraphs", fileId:"drive_doc_air_essay", fileVersionId:"ver_air_3", unitType:"paragraph", location:{type:"document_paragraph",paragraphStart:47,paragraphEnd:51,headingPath:["Detroit Measurements"]}, text:"Detroit showed nearly 1,000 PM1 particles—ten times higher than surrounding areas. The pollution signal aligned with manufacturing zones and exposed environmental justice gaps.", metadata:{heading:"Detroit Measurements"}, extractionStatus:"complete", checksum:"sha256:air-paragraphs" },
-  { id:"unit_air_slide", fileId:"drive_slide_air_research", fileVersionId:"ver_slide_2", unitType:"speaker_notes", location:{type:"slide",slideNumber:12,includesSpeakerNotes:true}, text:"PM1 concentrations by location. Detroit readings exceeded nearby suburban sites by approximately tenfold. Cross-border pollution follows atmospheric physics rather than political boundaries.", metadata:{slideTitle:"PM1 Concentrations by Location"}, extractionStatus:"complete", checksum:"sha256:air-slide" },
-  { id:"unit_agu_page", fileId:"drive_pdf_agu_notes", fileVersionId:"ver_pdf_1", unitType:"page", location:{type:"pdf_page",pageNumber:3}, text:"Analysis of PM1 and formaldehyde correlations across states with varying combustion regulations, including Detroit sensor observations.", metadata:{page:3}, extractionStatus:"complete", checksum:"sha256:agu-page" },
-  { id:"unit_growth_slide", fileId:"drive_slide_growth", fileVersionId:"ver_growth_4", unitType:"slide_body", location:{type:"slide",slideNumber:8,includesSpeakerNotes:true}, text:"Customer growth accelerated in Q4 as enterprise expansion and improved retention increased active accounts by 28 percent.", metadata:{slideTitle:"Q4 Customer Growth Drivers"}, extractionStatus:"complete", checksum:"sha256:growth-slide" },
-  { id:"unit_revenue_cells", fileId:"drive_sheet_revenue", fileVersionId:"ver_revenue_6", unitType:"cell_range", location:{type:"spreadsheet_range",sheetName:"Revenue",range:"B4:F12"}, text:"Revenue forecast by quarter. Enterprise expansion contributes 52 percent of projected growth, with infrastructure costs reaching 68000 dollars.", metadata:{sheet:"Revenue",range:"B4:F12"}, extractionStatus:"complete", checksum:"sha256:revenue-cells" },
-];
+export const sampleUnits:ExtractedUnit[]=sampleFiles.filter(file=>file.indexStatus==="indexed").map((file,index)=>{
+  const isDoc=file.mimeType.includes("document"),isSlides=file.mimeType.includes("presentation"),isSheet=file.mimeType.includes("spreadsheet");
+  const location:ExtractedUnit["location"]=isDoc?{type:"document_paragraph",paragraphStart:47+index,paragraphEnd:51+index,headingPath:["Detroit measurements"]}:isSlides?{type:"slide",slideNumber:(index%15)+1,includesSpeakerNotes:true}:isSheet?{type:"spreadsheet_range",sheetName:"Measurements",range:`B${index+2}:F${index+10}`}:{type:"pdf_page",pageNumber:(index%12)+1};
+  return {id:`unit_${file.id}`,fileId:file.id,fileVersionId:file.versionId,unitType:isDoc?"paragraph":isSlides?"speaker_notes":isSheet?"cell_range":"page",location,text:`Synthetic demo evidence about air pollution, Detroit PM1 measurements, environmental justice, emissions, and atmospheric conditions. Record ${index+1} is fictional and exists only to test complete pagination and structural citations.`,metadata:{synthetic:true,topic:"air pollution Detroit"},extractionStatus:"complete",checksum:`sha256:synthetic-${index+1}`};
+});
 
-export const samplePermissions: PermissionSnapshot[] = sampleFiles.map((file) => ({ id:file.permissionSnapshotId, fileId:file.id, actorId:SAMPLE_ACTOR_ID, status:"allowed", reason:"Sample actor has access in the local sample corpus.", capturedAt:"2026-07-11T14:22:10Z", sourcePermissionVersion:"sample-v1" }));
-
+export const samplePermissions:PermissionSnapshot[]=sampleFiles.map(file=>({id:file.permissionSnapshotId,fileId:file.id,actorId:SAMPLE_ACTOR_ID,status:"allowed",reason:"Allowed only inside the synthetic demo workspace.",capturedAt:modifiedAt,sourcePermissionVersion:"demo-v2"}));

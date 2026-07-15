@@ -1,32 +1,17 @@
 # Retrieval architecture
 
-## Current boundary
+The live path is `/api/workspaces/:workspaceId/search` and `/v1/search` → authenticated workspace authorization → D1 source files and structural units → literal candidates → deterministic Best Matches ranking or complete Find All ordering → exact citations → one durable trace → one durable receipt.
 
-`lib/retrieval/core.ts` is a deterministic sample implementation. It performs local tokenization, small query expansion, pre-filtering, full-text candidate generation, deterministic ranking, structural evidence selection, coverage calculation, trace generation, and exportable record generation.
+Structural units are Google Doc paragraphs, Slide elements and speaker notes, Sheet cells, and PDF text blocks. Each stores a source location and SHA-256 content hash. Coarse Drive export fallbacks remain labeled with only the location actually available.
 
-It does not use embeddings or a production reranker. The trace marks those stages as planned or simulated.
+Semantic indexing and query-time embeddings are paused. Active sync, product search, REST search, and MCP search make no OpenAI API calls. Existing dormant experimental code and schema are not part of the active retrieval path and must not be enabled until explicitly authorized.
 
-## Production adapters
+Each Google-native extraction records `structured`, `fallback`, or `unsupported`. A fallback also stores a sanitized API/status reason such as `GOOGLE_DOCS_HTTP_403`; it never stores an access token or provider response body. A run records structured and fallback totals so live extraction claims can be audited.
 
-`lib/retrieval/pipeline.ts` defines boundaries for:
+Receipts store hashes of the retrieval configuration, index snapshot, and returned result set. Traces store the correlation ID, authorization/load/matching timing, candidate counts, permission decisions, exclusions, coverage, and exact returned evidence. These records are durable but neither immutable nor digitally signed.
 
-1. query parsing;
-2. actor permission resolution;
-3. keyword retrieval;
-4. semantic retrieval;
-5. candidate merging;
-6. reranking;
-7. evidence selection;
-8. coverage calculation;
-9. receipt generation;
-10. background jobs;
-11. vector indexing.
+Before browser, REST, MCP, citation, or relationship data is returned, the server requires workspace membership or a workspace-scoped API key, requires an active connector, refreshes an expired access token when possible, and completes a current Drive inventory. Indexed rows whose source IDs are absent from that inventory are ineligible. If the inventory or token refresh fails, retrieval fails closed with no partial results.
 
-The production implementation should use PostgreSQL for durable entity state, a pgvector-compatible implementation behind `VectorIndexAdapter`, and an idempotent job system behind `BackgroundJobAdapter`. These services are not introduced until live connector work requires them.
+Manual sync is incremental and idempotent. It upserts connector/source pairs, reuses unchanged structured files, retries transient Google failures, re-extracts changed or prior-fallback files, and marks missing source IDs as deleted or no longer authorized while removing their extracted units. Each run records additions, updates, unchanged files, removals, pagination status, and structural/fallback totals.
 
-## Required persistent entities
-
-Workspace, Connector, SourceFile, FileVersion, PermissionSnapshot, ExtractedUnit, RetrievalQuery, RetrievalCandidate, RetrievalResult, CoverageReport, RetrievalTrace, and RetrievalReceipt are typed in `lib/retrieval/types.ts`.
-
-Before production ingestion, these contracts should become migrations with indexes on workspace ID, source ID, source file ID, MIME type, owner, modified date, permission version, content hash, extraction status, and trace ID.
-
+Lineage is heuristic and explicitly inferred. Content hashes, token similarity, filenames, timestamps, version terms, and numeric differences create explainable, user-correctable relationships.
