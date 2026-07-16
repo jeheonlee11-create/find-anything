@@ -62,3 +62,41 @@ export function reconcileInterruptedRun(
     paginationComplete: run.paginationComplete,
   };
 }
+
+export function planSyncContinuation<T extends { id: string; modifiedTime: string }>(
+  inventory: T[],
+  previousFiles: {
+    sourceId: string;
+    modifiedAt: string;
+    indexStatus: string;
+    extractionMode: string | null;
+  }[],
+) {
+  const previousBySourceId = new Map(
+      previousFiles.map((file) => [file.sourceId, file]),
+    ),
+    currentFiles = inventory.filter((file) => {
+      const previous = previousBySourceId.get(file.id);
+      return (
+        previous?.modifiedAt === file.modifiedTime &&
+        ["indexed", "unsupported"].includes(previous.indexStatus)
+      );
+    }),
+    pendingFiles = inventory.filter((file) => !currentFiles.includes(file)),
+    indexedFiles = currentFiles
+      .map((file) => previousBySourceId.get(file.id))
+      .filter((file) => file?.indexStatus === "indexed");
+  return {
+    previousBySourceId,
+    pendingFiles,
+    filesProcessed: currentFiles.length,
+    filesUnchanged: currentFiles.length,
+    filesIndexed: indexedFiles.length,
+    structuredFiles: indexedFiles.filter(
+      (file) => file?.extractionMode === "structured",
+    ).length,
+    fallbackFiles: indexedFiles.filter(
+      (file) => file?.extractionMode === "fallback",
+    ).length,
+  };
+}

@@ -114,7 +114,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
         break;
       }
       attempts += 1;
-      continuationNeeded = body.continuationNeeded === true && attempts < 5;
+      continuationNeeded = body.continuationNeeded === true && attempts < 40;
     } while (continuationNeeded);
     await load();
     setBusy(false);

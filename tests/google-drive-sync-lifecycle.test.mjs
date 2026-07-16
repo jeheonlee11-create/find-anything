@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import {
   isStaleSync,
+  planSyncContinuation,
   reconcileInterruptedRun,
   terminalSyncStatus,
 } from "../lib/google-drive/sync-lifecycle.ts";
@@ -56,6 +57,32 @@ test("stale-run detection does not take over a fresh active run", () => {
   assert.equal(isStaleSync("2026-07-16T11:55:00.001Z", now), false);
 });
 
+test("large-Drive continuation skips completed native files and advances", () => {
+  const inventory = [
+      { id: "native", modifiedTime: "2026-07-01" },
+      { id: "structured", modifiedTime: "2026-07-02" },
+      { id: "new", modifiedTime: "2026-07-03" },
+    ],
+    plan = planSyncContinuation(inventory, [
+      {
+        sourceId: "native",
+        modifiedAt: "2026-07-01",
+        indexStatus: "indexed",
+        extractionMode: "native",
+      },
+      {
+        sourceId: "structured",
+        modifiedAt: "2026-07-02",
+        indexStatus: "indexed",
+        extractionMode: "structured",
+      },
+    ]);
+  assert.deepEqual(plan.pendingFiles.map((file) => file.id), ["new"]);
+  assert.equal(plan.filesProcessed, 2);
+  assert.equal(plan.filesIndexed, 2);
+  assert.equal(plan.structuredFiles, 1);
+});
+
 test("sync checkpoints pagination and counters before terminal completion", async () => {
   const [sync, client, repository, dashboard] = await Promise.all([
     readFile(new URL("../lib/google-drive/sync.ts", import.meta.url), "utf8"),
@@ -72,6 +99,8 @@ test("sync checkpoints pagination and counters before terminal completion", asyn
   assert.match(client, /onProgress/);
   assert.match(sync, /checkpointSync/);
   assert.match(sync, /SYNC_PROCESSING_BUDGET_MS/);
+  assert.match(sync, /SYNC_BATCH_SIZE/);
+  assert.match(sync, /existingSourceFiles/);
   assert.match(sync, /continuationNeeded/);
   assert.match(repository, /SYNC_INTERRUPTED_RECOVERED/);
   assert.match(repository, /GOOGLE_SYNC_ALREADY_RUNNING/);

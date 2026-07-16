@@ -160,6 +160,23 @@ export async function existingSourceFile(
     )
     .get();
 }
+export async function existingSourceFiles(connectorId: string) {
+  const db = await getDb();
+  return db
+    .select({
+      sourceId: sourceFiles.sourceId,
+      modifiedAt: sourceFiles.modifiedAt,
+      indexStatus: sourceFiles.indexStatus,
+      extractionMode: sourceFiles.extractionMode,
+    })
+    .from(sourceFiles)
+    .where(
+      and(
+        eq(sourceFiles.connectorId, connectorId),
+        eq(sourceFiles.trashed, false),
+      ),
+    );
+}
 export async function updateConnectorTokens(
   id: string,
   input: {

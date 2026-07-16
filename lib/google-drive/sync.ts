@@ -8,7 +8,7 @@ import { extractDriveContent } from "./extraction";
 import {
   beginSync,
   checkpointSync,
-  existingSourceFile,
+  existingSourceFiles,
   finishSync,
   markFileFailed,
   persistExtractedFile,
@@ -17,7 +17,7 @@ import {
   updateConnectorTokens,
 } from "./repository";
 import { refreshAccessToken } from "./oauth";
-import { terminalSyncStatus } from "./sync-lifecycle";
+import { planSyncContinuation, terminalSyncStatus } from "./sync-lifecycle";
 export interface StoredConnector {
   id: string;
   workspaceId: string;
@@ -26,6 +26,7 @@ export interface StoredConnector {
   tokenExpiresAt: string | null;
 }
 const SYNC_PROCESSING_BUDGET_MS = 20_000;
+const SYNC_BATCH_SIZE = 6;
 export async function usableAccessToken(connector: StoredConnector) {
   if (
     connector.tokenExpiresAt &&
@@ -79,89 +80,103 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
     });
     if (inventory.incompleteSearch) throw new Error("GOOGLE_INCOMPLETE_SEARCH");
     discovered = inventory.files.length;
-    const processingDeadline = Date.now() + SYNC_PROCESSING_BUDGET_MS;
-    for (const file of inventory.files) {
+    const previousFiles = await existingSourceFiles(connector.id),
+      continuation = planSyncContinuation(inventory.files, previousFiles),
+      { previousBySourceId, pendingFiles } = continuation,
+      processingDeadline = Date.now() + SYNC_PROCESSING_BUDGET_MS;
+    filesProcessed = continuation.filesProcessed;
+    filesUnchanged = continuation.filesUnchanged;
+    indexed = continuation.filesIndexed;
+    structuredFiles = continuation.structuredFiles;
+    fallbackFiles = continuation.fallbackFiles;
+    await checkpointSync(runId, {
+      filesDiscovered: discovered,
+      filesIndexed: indexed,
+      filesFailed: failed,
+      structuredFiles,
+      fallbackFiles,
+      filesUnchanged,
+      paginationComplete: true,
+      nextPageToken: null,
+    });
+    for (let offset = 0; offset < pendingFiles.length; offset += SYNC_BATCH_SIZE) {
       if (Date.now() >= processingDeadline) {
         stoppedEarly = true;
         break;
       }
-      try {
-        const previous = await existingSourceFile(connector.id, file.id);
-        if (
-          previous &&
-          previous.modifiedAt === file.modifiedTime &&
-          previous.indexStatus === "indexed" &&
-          previous.extractionMode === "structured"
-        ) {
-          filesUnchanged += 1;
-          structuredFiles += 1;
-          indexed += 1;
-          filesProcessed += 1;
-          await checkpointSync(runId, {
-            filesDiscovered: discovered,
-            filesIndexed: indexed,
-            filesFailed: failed,
-            structuredFiles,
-            fallbackFiles,
-            filesAdded,
-            filesUpdated,
-            filesUnchanged,
-            paginationComplete: true,
-            nextPageToken: null,
-          });
+      const batch = pendingFiles.slice(offset, offset + SYNC_BATCH_SIZE),
+        results = await Promise.all(
+          batch.map(async (file) => {
+            const previous = previousBySourceId.get(file.id);
+            try {
+              let structured = null;
+              let structuralFallbackReason: string | null = null;
+              try {
+                structured = await fetchStructuredGoogleFile(accessToken, file);
+              } catch (error) {
+                structuralFallbackReason = safeErrorCode(error);
+              }
+              const exported =
+                structured ?? (await exportGoogleFile(accessToken, file));
+              if (!exported) {
+                await persistExtractedFile({
+                  connectorId: connector.id,
+                  workspaceId: connector.workspaceId,
+                  file,
+                  units: [],
+                  extractionMode: "unsupported",
+                  structuralFallbackReason,
+                });
+                return { outcome: "unsupported" as const, previous: Boolean(previous) };
+              }
+              const units = await extractDriveContent(file, exported);
+              await persistExtractedFile({
+                connectorId: connector.id,
+                workspaceId: connector.workspaceId,
+                file,
+                units,
+                extractionMode: structured
+                  ? "structured"
+                  : structuralFallbackReason
+                    ? "fallback"
+                    : "native",
+                structuralFallbackReason,
+              });
+              return {
+                outcome: "indexed" as const,
+                previous: Boolean(previous),
+                structured: Boolean(structured),
+                fallbackReason: structuralFallbackReason,
+              };
+            } catch (error) {
+              const errorCode = safeErrorCode(error);
+              await markFileFailed({
+                connectorId: connector.id,
+                workspaceId: connector.workspaceId,
+                file,
+                errorCode,
+              });
+              return { outcome: "failed" as const, errorCode };
+            }
+          }),
+        );
+      for (const result of results) {
+        filesProcessed += 1;
+        if (result.outcome === "failed") {
+          failed += 1;
           continue;
         }
-        let structured = null;
-        let structuralFallbackReason: string | null = null;
-        try {
-          structured = await fetchStructuredGoogleFile(accessToken, file);
-        } catch (error) {
-          structuralFallbackReason = safeErrorCode(error);
-          fallbackReasons[structuralFallbackReason] =
-            (fallbackReasons[structuralFallbackReason] ?? 0) + 1;
-        }
-        const exported =
-          structured ?? (await exportGoogleFile(accessToken, file));
-        if (!exported) {
-          await persistExtractedFile({
-            connectorId: connector.id,
-            workspaceId: connector.workspaceId,
-            file,
-            units: [],
-            extractionMode: "unsupported",
-            structuralFallbackReason,
-          });
-          filesProcessed += 1;
-          continue;
-        }
-        const units = await extractDriveContent(file, exported);
-        await persistExtractedFile({
-          connectorId: connector.id,
-          workspaceId: connector.workspaceId,
-          file,
-          units,
-          extractionMode: structured
-            ? "structured"
-            : structuralFallbackReason
-              ? "fallback"
-              : "native",
-          structuralFallbackReason,
-        });
-        if (structured) structuredFiles += 1;
-        else if (structuralFallbackReason) fallbackFiles += 1;
-        if (previous) filesUpdated += 1;
-        else filesAdded += 1;
+        if (result.outcome === "unsupported") continue;
         indexed += 1;
-      } catch (error) {
-        failed += 1;
-        await markFileFailed({
-          connectorId: connector.id,
-          workspaceId: connector.workspaceId,
-          file,
-          errorCode: safeErrorCode(error),
-        });
+        if (result.structured) structuredFiles += 1;
+        else if (result.fallbackReason) {
+          fallbackFiles += 1;
+          fallbackReasons[result.fallbackReason] =
+            (fallbackReasons[result.fallbackReason] ?? 0) + 1;
+        }
+        if (result.previous) filesUpdated += 1;
+        else filesAdded += 1;
       }
-      filesProcessed += 1;
       await checkpointSync(runId, {
         filesDiscovered: discovered,
         filesIndexed: indexed,
@@ -225,7 +240,7 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
       filesRemoved,
       paginationComplete: true,
       filesProcessed,
-      filesDeferred: Math.max(0, discovered - filesProcessed),
+      filesDeferred: Math.max(0, pendingFiles.length - (filesProcessed - filesUnchanged)),
       continuationNeeded: stoppedEarly,
     };
   } catch (error) {

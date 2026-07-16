@@ -6,7 +6,7 @@ import { rateLimit, recordBetaEvent } from "@/lib/beta/repository";
 export async function POST(request: Request) {
   const actor = await requireApiActor(request);
   if (isAuthFailure(actor)) return actor;
-  if (!(await rateLimit(actor.actorId, "drive_sync", 6, 600))) return NextResponse.json({ error: { code: "RATE_LIMITED", message: "Indexing is limited to six runs every ten minutes. Please wait and retry." } }, { status: 429 });
+  if (!(await rateLimit(actor.actorId, "drive_sync", 50, 1800))) return NextResponse.json({ error: { code: "RATE_LIMITED", message: "Indexing is still processing a large Drive. Please wait before starting another run." } }, { status: 429 });
   const body = (await request.json().catch(() => null)) as {
       workspaceId?: unknown;
     } | null,
