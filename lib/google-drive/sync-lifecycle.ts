@@ -79,19 +79,23 @@ export function planSyncContinuation<T extends { id: string; modifiedTime: strin
       const previous = previousBySourceId.get(file.id);
       return (
         previous?.modifiedAt === file.modifiedTime &&
-        ["indexed", "unsupported"].includes(previous.indexStatus)
+        ["indexed", "unsupported", "failed"].includes(previous.indexStatus)
       );
     }),
     pendingFiles = inventory.filter((file) => !currentFiles.includes(file)),
     indexedFiles = currentFiles
       .map((file) => previousBySourceId.get(file.id))
       .filter((file) => file?.indexStatus === "indexed");
+  const failedFiles = currentFiles
+    .map((file) => previousBySourceId.get(file.id))
+    .filter((file) => file?.indexStatus === "failed");
   return {
     previousBySourceId,
     pendingFiles,
     filesProcessed: currentFiles.length,
     filesUnchanged: currentFiles.length,
     filesIndexed: indexedFiles.length,
+    filesFailed: failedFiles.length,
     structuredFiles: indexedFiles.filter(
       (file) => file?.extractionMode === "structured",
     ).length,

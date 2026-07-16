@@ -80,7 +80,27 @@ test("large-Drive continuation skips completed native files and advances", () =>
   assert.deepEqual(plan.pendingFiles.map((file) => file.id), ["new"]);
   assert.equal(plan.filesProcessed, 2);
   assert.equal(plan.filesIndexed, 2);
+  assert.equal(plan.filesFailed, 0);
   assert.equal(plan.structuredFiles, 1);
+});
+
+test("a file quarantined by a terminated batch does not block continuation", () => {
+  const plan = planSyncContinuation(
+    [
+      { id: "interrupted", modifiedTime: "2026-07-04" },
+      { id: "next", modifiedTime: "2026-07-05" },
+    ],
+    [
+      {
+        sourceId: "interrupted",
+        modifiedAt: "2026-07-04",
+        indexStatus: "failed",
+        extractionMode: null,
+      },
+    ],
+  );
+  assert.deepEqual(plan.pendingFiles.map((file) => file.id), ["next"]);
+  assert.equal(plan.filesFailed, 1);
 });
 
 test("sync checkpoints pagination and counters before terminal completion", async () => {
@@ -98,9 +118,10 @@ test("sync checkpoints pagination and counters before terminal completion", asyn
   ]);
   assert.match(client, /onProgress/);
   assert.match(sync, /checkpointSync/);
-  assert.match(sync, /SYNC_PROCESSING_BUDGET_MS/);
+  assert.match(sync, /SYNC_TOTAL_BUDGET_MS/);
   assert.match(sync, /SYNC_BATCH_SIZE/);
   assert.match(sync, /existingSourceFiles/);
+  assert.match(sync, /SYNC_FILE_INTERRUPTED/);
   assert.match(sync, /continuationNeeded/);
   assert.match(repository, /SYNC_INTERRUPTED_RECOVERED/);
   assert.match(repository, /GOOGLE_SYNC_ALREADY_RUNNING/);

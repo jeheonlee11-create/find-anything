@@ -25,8 +25,8 @@ export interface StoredConnector {
   refreshTokenCiphertext: string | null;
   tokenExpiresAt: string | null;
 }
-const SYNC_PROCESSING_BUDGET_MS = 20_000;
-const SYNC_BATCH_SIZE = 6;
+const SYNC_TOTAL_BUDGET_MS = 12_000;
+const SYNC_BATCH_SIZE = 2;
 export async function usableAccessToken(connector: StoredConnector) {
   if (
     connector.tokenExpiresAt &&
@@ -48,7 +48,8 @@ export async function usableAccessToken(connector: StoredConnector) {
   return tokens.access_token;
 }
 export async function synchronizeGoogleDrive(connector: StoredConnector) {
-  const runId = await beginSync(connector.id);
+  const requestStartedAt = Date.now(),
+    runId = await beginSync(connector.id, true);
   let discovered = 0,
     indexed = 0,
     failed = 0,
@@ -83,10 +84,11 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
     const previousFiles = await existingSourceFiles(connector.id),
       continuation = planSyncContinuation(inventory.files, previousFiles),
       { previousBySourceId, pendingFiles } = continuation,
-      processingDeadline = Date.now() + SYNC_PROCESSING_BUDGET_MS;
+      processingDeadline = requestStartedAt + SYNC_TOTAL_BUDGET_MS;
     filesProcessed = continuation.filesProcessed;
     filesUnchanged = continuation.filesUnchanged;
     indexed = continuation.filesIndexed;
+    failed = continuation.filesFailed;
     structuredFiles = continuation.structuredFiles;
     fallbackFiles = continuation.fallbackFiles;
     await checkpointSync(runId, {
@@ -104,8 +106,18 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
         stoppedEarly = true;
         break;
       }
-      const batch = pendingFiles.slice(offset, offset + SYNC_BATCH_SIZE),
-        results = await Promise.all(
+      const batch = pendingFiles.slice(offset, offset + SYNC_BATCH_SIZE);
+      await Promise.all(
+        batch.map((file) =>
+          markFileFailed({
+            connectorId: connector.id,
+            workspaceId: connector.workspaceId,
+            file,
+            errorCode: "SYNC_FILE_INTERRUPTED",
+          }),
+        ),
+      );
+      const results = await Promise.all(
           batch.map(async (file) => {
             const previous = previousBySourceId.get(file.id);
             try {

@@ -103,18 +103,30 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
     let attempts = 0,
       continuationNeeded = false;
     do {
-      const response = await fetch("/api/connectors/google-drive/sync", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ workspaceId }),
-      }),
-        body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        setError(body.error?.message ?? "Indexing failed.");
-        break;
+      try {
+        const response = await fetch("/api/connectors/google-drive/sync", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ workspaceId }),
+          }),
+          body = await response.json().catch(() => ({}));
+        attempts += 1;
+        if (!response.ok) {
+          if (response.status >= 500 && attempts < 40) {
+            continuationNeeded = true;
+            await new Promise((resolve) => setTimeout(resolve, 750));
+            continue;
+          }
+          setError(body.error?.message ?? "Indexing failed.");
+          break;
+        }
+        continuationNeeded = body.continuationNeeded === true && attempts < 40;
+      } catch {
+        attempts += 1;
+        continuationNeeded = attempts < 40;
+        if (!continuationNeeded) setError("Indexing paused after repeated connection interruptions. Click Index now to continue safely.");
+        else await new Promise((resolve) => setTimeout(resolve, 750));
       }
-      attempts += 1;
-      continuationNeeded = body.continuationNeeded === true && attempts < 40;
     } while (continuationNeeded);
     await load();
     setBusy(false);

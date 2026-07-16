@@ -207,8 +207,15 @@ export async function setConnectorStatus(
     })
     .where(eq(connectors.id, id));
 }
-export async function beginSync(connectorId: string) {
-  await recoverStaleSyncRuns(connectorId);
+export async function beginSync(
+  connectorId: string,
+  recoverInterrupted = false,
+) {
+  await recoverStaleSyncRuns(
+    connectorId,
+    Date.now(),
+    recoverInterrupted ? 0 : undefined,
+  );
   const db = await getDb(),
     active = await db
       .select({ id: syncRuns.id })
@@ -286,6 +293,7 @@ export async function checkpointSync(
 export async function recoverStaleSyncRuns(
   connectorId: string,
   now = Date.now(),
+  staleAfterMs?: number,
 ) {
   const db = await getDb(),
     runs = await db
@@ -298,7 +306,9 @@ export async function recoverStaleSyncRuns(
         ),
       )
       .orderBy(desc(syncRuns.startedAt)),
-    stale = runs.filter((run) => isStaleSync(run.startedAt, now));
+    stale = runs.filter((run) =>
+      isStaleSync(run.startedAt, now, staleAfterMs),
+    );
   if (!stale.length) return 0;
   const rows = await db
       .select({

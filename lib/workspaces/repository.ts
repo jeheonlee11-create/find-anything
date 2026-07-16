@@ -105,7 +105,7 @@ export async function workspaceDashboard(actorId: string, workspaceId: string) {
       )
       .get();
   if (connector?.status === "syncing") {
-    await recoverStaleSyncRuns(connector.id);
+    await recoverStaleSyncRuns(connector.id, Date.now(), 30_000);
     connector = await db
       .select({
         id: connectors.id,
