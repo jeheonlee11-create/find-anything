@@ -45,6 +45,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
     [data, setData] = useState<Dashboard | null>(null),
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
+    [busyLabel, setBusyLabel] = useState("Working…"),
     [error, setError] = useState("");
   const load = useCallback(async () => {
     setLoading(true);
@@ -99,17 +100,22 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
   }
   async function sync() {
     setBusy(true);
+    setBusyLabel("Indexing…");
     setError("");
     let attempts = 0,
       continuationNeeded = false;
     do {
+      const controller = new AbortController(),
+        timeout = window.setTimeout(() => controller.abort(), 18_000);
       try {
         const response = await fetch("/api/connectors/google-drive/sync", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ workspaceId }),
+            signal: controller.signal,
           }),
           body = await response.json().catch(() => ({}));
+        window.clearTimeout(timeout);
         attempts += 1;
         if (!response.ok) {
           if (response.status >= 500 && attempts < 40) {
@@ -121,11 +127,21 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
           break;
         }
         continuationNeeded = body.continuationNeeded === true && attempts < 40;
+        if (continuationNeeded)
+          setBusyLabel(`Continuing… ${attempts}/40`);
       } catch {
+        window.clearTimeout(timeout);
         attempts += 1;
         continuationNeeded = attempts < 40;
-        if (!continuationNeeded) setError("Indexing paused after repeated connection interruptions. Click Index now to continue safely.");
-        else await new Promise((resolve) => setTimeout(resolve, 750));
+        if (!continuationNeeded)
+          setError(
+            "Indexing paused safely after repeated hosting interruptions. Your saved progress was preserved.",
+          );
+        else {
+          setBusyLabel(`Recovering… ${attempts}/40`);
+          await load();
+          await new Promise((resolve) => setTimeout(resolve, 750));
+        }
       }
     } while (continuationNeeded);
     await load();
@@ -205,7 +221,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
             {data.latestSync&&<div><p>{data.latestSync.paginationComplete?"The complete authorized Drive inventory was checked.":"Coverage is incomplete because Drive pagination did not finish."}</p><p>{data.latestSync.filesAdded} new · {data.latestSync.filesUpdated} updated · {data.latestSync.filesUnchanged} unchanged · {data.latestSync.filesRemoved} removed or no longer authorized</p></div>}
             <div>
               <button className="button" disabled={busy} onClick={sync}>
-                {busy ? "Working…" : "Index now"}
+                {busy ? busyLabel : "Index now"}
               </button>
               <button disabled={busy} onClick={disconnect}>
                 Disconnect Google Drive
