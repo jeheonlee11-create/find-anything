@@ -7,6 +7,7 @@ import {
 import { extractDriveContent } from "./extraction";
 import {
   beginSync,
+  checkpointSync,
   existingSourceFile,
   finishSync,
   markFileFailed,
@@ -16,6 +17,7 @@ import {
   updateConnectorTokens,
 } from "./repository";
 import { refreshAccessToken } from "./oauth";
+import { terminalSyncStatus } from "./sync-lifecycle";
 export interface StoredConnector {
   id: string;
   workspaceId: string;
@@ -23,6 +25,7 @@ export interface StoredConnector {
   refreshTokenCiphertext: string | null;
   tokenExpiresAt: string | null;
 }
+const SYNC_PROCESSING_BUDGET_MS = 20_000;
 export async function usableAccessToken(connector: StoredConnector) {
   if (
     connector.tokenExpiresAt &&
@@ -53,15 +56,35 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
     filesAdded = 0,
     filesUpdated = 0,
     filesUnchanged = 0,
-    filesRemoved = 0;
+    filesRemoved = 0,
+    paginationComplete = false,
+    filesProcessed = 0,
+    stoppedEarly = false;
   const fallbackReasons: Record<string, number> = {};
   await setConnectorStatus(connector.id, "syncing");
   try {
     const accessToken = await usableAccessToken(connector);
-    const inventory = await listAllDriveFiles(accessToken);
+    const inventory = await listAllDriveFiles(accessToken, async (progress) => {
+      discovered = progress.filesDiscovered;
+      paginationComplete = progress.paginationComplete;
+      await checkpointSync(runId, {
+        filesDiscovered: discovered,
+        filesIndexed: indexed,
+        filesFailed: failed,
+        structuredFiles,
+        fallbackFiles,
+        paginationComplete: progress.paginationComplete,
+        nextPageToken: progress.nextPageToken,
+      });
+    });
     if (inventory.incompleteSearch) throw new Error("GOOGLE_INCOMPLETE_SEARCH");
     discovered = inventory.files.length;
+    const processingDeadline = Date.now() + SYNC_PROCESSING_BUDGET_MS;
     for (const file of inventory.files) {
+      if (Date.now() >= processingDeadline) {
+        stoppedEarly = true;
+        break;
+      }
       try {
         const previous = await existingSourceFile(connector.id, file.id);
         if (
@@ -73,6 +96,19 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
           filesUnchanged += 1;
           structuredFiles += 1;
           indexed += 1;
+          filesProcessed += 1;
+          await checkpointSync(runId, {
+            filesDiscovered: discovered,
+            filesIndexed: indexed,
+            filesFailed: failed,
+            structuredFiles,
+            fallbackFiles,
+            filesAdded,
+            filesUpdated,
+            filesUnchanged,
+            paginationComplete: true,
+            nextPageToken: null,
+          });
           continue;
         }
         let structured = null;
@@ -95,6 +131,7 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
             extractionMode: "unsupported",
             structuralFallbackReason,
           });
+          filesProcessed += 1;
           continue;
         }
         const units = await extractDriveContent(file, exported);
@@ -124,13 +161,33 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
           errorCode: safeErrorCode(error),
         });
       }
+      filesProcessed += 1;
+      await checkpointSync(runId, {
+        filesDiscovered: discovered,
+        filesIndexed: indexed,
+        filesFailed: failed,
+        structuredFiles,
+        fallbackFiles,
+        fallbackReasonsJson: JSON.stringify(fallbackReasons),
+        filesAdded,
+        filesUpdated,
+        filesUnchanged,
+        paginationComplete: true,
+        nextPageToken: null,
+      });
     }
     filesRemoved = await reconcileMissingSourceFiles(
       connector.id,
       new Set(inventory.files.map((file) => file.id)),
     );
+    const status = stoppedEarly
+      ? "partial"
+      : terminalSyncStatus({
+          filesIndexed: indexed,
+          filesFailed: failed,
+        });
     await finishSync(runId, {
-      status: "complete",
+      status,
       filesDiscovered: discovered,
       filesIndexed: indexed,
       filesFailed: failed,
@@ -142,9 +199,19 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
       filesUnchanged,
       filesRemoved,
       paginationComplete: true,
+      errorCode: stoppedEarly ? "SYNC_TIME_BUDGET_REACHED" : undefined,
     });
-    await setConnectorStatus(connector.id, "connected");
+    await setConnectorStatus(
+      connector.id,
+      "connected",
+      stoppedEarly
+        ? "SYNC_TIME_BUDGET_REACHED"
+        : status === "partial"
+          ? "SYNC_PARTIAL"
+          : null,
+    );
     return {
+      status,
       runId,
       filesDiscovered: discovered,
       filesIndexed: indexed,
@@ -157,10 +224,17 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
       filesUnchanged,
       filesRemoved,
       paginationComplete: true,
+      filesProcessed,
+      filesDeferred: Math.max(0, discovered - filesProcessed),
+      continuationNeeded: stoppedEarly,
     };
   } catch (error) {
+    const status = terminalSyncStatus(
+      { filesIndexed: indexed, filesFailed: failed },
+      true,
+    );
     await finishSync(runId, {
-      status: "failed",
+      status,
       filesDiscovered: discovered,
       filesIndexed: indexed,
       filesFailed: failed,
@@ -171,10 +245,14 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
       filesUpdated,
       filesUnchanged,
       filesRemoved,
-      paginationComplete: false,
+      paginationComplete,
       errorCode: safeErrorCode(error),
     });
-    await setConnectorStatus(connector.id, "error", safeErrorCode(error));
+    await setConnectorStatus(
+      connector.id,
+      status === "partial" ? "connected" : "error",
+      safeErrorCode(error),
+    );
     throw error;
   }
 }

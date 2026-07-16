@@ -100,13 +100,22 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
   async function sync() {
     setBusy(true);
     setError("");
-    const response = await fetch("/api/connectors/google-drive/sync", {
+    let attempts = 0,
+      continuationNeeded = false;
+    do {
+      const response = await fetch("/api/connectors/google-drive/sync", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ workspaceId }),
       }),
-      body = await response.json().catch(() => ({}));
-    if (!response.ok) setError(body.error?.message ?? "Indexing failed.");
+        body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(body.error?.message ?? "Indexing failed.");
+        break;
+      }
+      attempts += 1;
+      continuationNeeded = body.continuationNeeded === true && attempts < 5;
+    } while (continuationNeeded);
     await load();
     setBusy(false);
   }

@@ -41,7 +41,16 @@ async function googleFetch(url: string, accessToken: string) {
   }
   return response;
 }
-export async function listAllDriveFiles(accessToken: string) {
+export interface DriveInventoryProgress {
+  filesDiscovered: number;
+  nextPageToken: string | null;
+  paginationComplete: boolean;
+  incompleteSearch: boolean;
+}
+export async function listAllDriveFiles(
+  accessToken: string,
+  onProgress?: (progress: DriveInventoryProgress) => void | Promise<void>,
+) {
   const files: DriveFileMetadata[] = [];
   let pageToken: string | undefined;
   let incompleteSearch = false;
@@ -64,6 +73,12 @@ export async function listAllDriveFiles(accessToken: string) {
     files.push(...(page.files ?? []));
     pageToken = page.nextPageToken;
     incompleteSearch ||= Boolean(page.incompleteSearch);
+    await onProgress?.({
+      filesDiscovered: files.length,
+      nextPageToken: pageToken ?? null,
+      paginationComplete: !pageToken && !incompleteSearch,
+      incompleteSearch,
+    });
   } while (pageToken);
   return { files, incompleteSearch };
 }

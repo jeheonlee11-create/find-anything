@@ -36,7 +36,7 @@ export async function POST(request: Request) {
     const result = await synchronizeGoogleDrive(connector);
     await recordBetaEvent({ actorId: actor.actorId, workspaceId, event: "indexing_completed", properties: { filesIndexed: result.filesIndexed, structuralFiles: result.structuredFiles } });
     return NextResponse.json(
-      { status: "complete", connectorId: connector.id, ...result },
+      { connectorId: connector.id, ...result },
       { headers: { "cache-control": "no-store" } },
     );
   } catch (error) {

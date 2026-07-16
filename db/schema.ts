@@ -168,7 +168,7 @@ export const syncRuns = sqliteTable(
     id: text("id").primaryKey(),
     connectorId: text("connector_id").notNull(),
     status: text("status", {
-      enum: ["running", "complete", "failed"],
+      enum: ["running", "complete", "partial", "failed"],
     }).notNull(),
     filesDiscovered: integer("files_discovered").notNull(),
     filesIndexed: integer("files_indexed").notNull(),

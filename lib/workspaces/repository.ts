@@ -9,6 +9,7 @@ import {
   workspaces,
 } from "@/db/schema";
 import type { AuthenticatedActor } from "@/lib/auth/api-authorization";
+import { recoverStaleSyncRuns } from "@/lib/google-drive/repository";
 export async function ensureUser(actor: AuthenticatedActor) {
   const db = await getDb(),
     now = new Date().toISOString();
@@ -85,8 +86,8 @@ export async function actorWorkspace(actorId: string, workspaceId: string) {
 export async function workspaceDashboard(actorId: string, workspaceId: string) {
   const workspace = await actorWorkspace(actorId, workspaceId);
   if (!workspace) return null;
-  const db = await getDb(),
-    connector = await db
+  const db = await getDb();
+  let connector = await db
       .select({
         id: connectors.id,
         status: connectors.status,
@@ -102,8 +103,23 @@ export async function workspaceDashboard(actorId: string, workspaceId: string) {
           eq(connectors.provider, "google_drive"),
         ),
       )
-      .get(),
-    files = await db
+      .get();
+  if (connector?.status === "syncing") {
+    await recoverStaleSyncRuns(connector.id);
+    connector = await db
+      .select({
+        id: connectors.id,
+        status: connectors.status,
+        lastSyncAt: connectors.lastSyncAt,
+        lastErrorCode: connectors.lastErrorCode,
+        grantedScopes: connectors.grantedScopes,
+        updatedAt: connectors.updatedAt,
+      })
+      .from(connectors)
+      .where(eq(connectors.id, connector.id))
+      .get();
+  }
+  const files = await db
       .select({
         id: sourceFiles.id,
         name: sourceFiles.name,

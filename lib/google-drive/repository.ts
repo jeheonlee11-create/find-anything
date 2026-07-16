@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   connectors,
@@ -12,6 +12,10 @@ import {
   workspaces,
 } from "@/db/schema";
 import type { AuthenticatedActor } from "@/lib/auth/api-authorization";
+import {
+  isStaleSync,
+  reconcileInterruptedRun,
+} from "@/lib/google-drive/sync-lifecycle";
 export function actorWorkspaceId(actorId: string) {
   return `ws_${actorId.slice("actor_".length)}`;
 }
@@ -187,8 +191,21 @@ export async function setConnectorStatus(
     .where(eq(connectors.id, id));
 }
 export async function beginSync(connectorId: string) {
+  await recoverStaleSyncRuns(connectorId);
   const db = await getDb(),
-    id = `sync_${crypto.randomUUID()}`,
+    active = await db
+      .select({ id: syncRuns.id })
+      .from(syncRuns)
+      .where(
+        and(
+          eq(syncRuns.connectorId, connectorId),
+          eq(syncRuns.status, "running"),
+        ),
+      )
+      .limit(1)
+      .then((rows) => rows[0]);
+  if (active) throw new Error("GOOGLE_SYNC_ALREADY_RUNNING");
+  const id = `sync_${crypto.randomUUID()}`,
     startedAt = new Date().toISOString();
   await db.insert(syncRuns).values({
     id,
@@ -204,7 +221,7 @@ export async function beginSync(connectorId: string) {
 export async function finishSync(
   id: string,
   input: {
-    status: "complete" | "failed";
+    status: "complete" | "partial" | "failed";
     filesDiscovered: number;
     filesIndexed: number;
     filesFailed: number;
@@ -228,6 +245,75 @@ export async function finishSync(
       finishedAt: new Date().toISOString(),
     })
     .where(eq(syncRuns.id, id));
+}
+export async function checkpointSync(
+  id: string,
+  input: Partial<{
+    filesDiscovered: number;
+    filesIndexed: number;
+    filesFailed: number;
+    structuredFiles: number;
+    fallbackFiles: number;
+    fallbackReasonsJson: string;
+    filesAdded: number;
+    filesUpdated: number;
+    filesUnchanged: number;
+    filesRemoved: number;
+    paginationComplete: boolean;
+    nextPageToken: string | null;
+  }>,
+) {
+  const db = await getDb();
+  await db.update(syncRuns).set(input).where(eq(syncRuns.id, id));
+}
+export async function recoverStaleSyncRuns(
+  connectorId: string,
+  now = Date.now(),
+) {
+  const db = await getDb(),
+    runs = await db
+      .select()
+      .from(syncRuns)
+      .where(
+        and(
+          eq(syncRuns.connectorId, connectorId),
+          eq(syncRuns.status, "running"),
+        ),
+      )
+      .orderBy(desc(syncRuns.startedAt)),
+    stale = runs.filter((run) => isStaleSync(run.startedAt, now));
+  if (!stale.length) return 0;
+  const rows = await db
+      .select({
+        indexStatus: sourceFiles.indexStatus,
+        extractionMode: sourceFiles.extractionMode,
+        trashed: sourceFiles.trashed,
+      })
+      .from(sourceFiles)
+      .where(eq(sourceFiles.connectorId, connectorId));
+  for (const run of stale) {
+    const reconciled = reconcileInterruptedRun(run, rows);
+    await finishSync(run.id, {
+      ...reconciled,
+      fallbackReasonsJson: run.fallbackReasonsJson,
+      filesAdded: run.filesAdded,
+      filesUpdated: run.filesUpdated,
+      filesUnchanged: run.filesUnchanged,
+      filesRemoved: run.filesRemoved,
+      paginationComplete: run.paginationComplete,
+      errorCode: "SYNC_INTERRUPTED_RECOVERED",
+    });
+  }
+  if (stale.length === runs.length)
+    await db
+      .update(connectors)
+      .set({
+        status: "connected",
+        lastErrorCode: "SYNC_INTERRUPTED_RECOVERED",
+        updatedAt: new Date(now).toISOString(),
+      })
+      .where(eq(connectors.id, connectorId));
+  return stale.length;
 }
 export async function persistExtractedFile(input: {
   connectorId: string;
