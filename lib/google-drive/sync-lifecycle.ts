@@ -1,5 +1,16 @@
 export type SyncTerminalStatus = "complete" | "partial" | "failed";
 
+const extractableMimeTypes = new Set([
+  "application/vnd.google-apps.document",
+  "application/vnd.google-apps.presentation",
+  "application/vnd.google-apps.spreadsheet",
+  "application/pdf",
+]);
+
+export function isExtractableDriveMimeType(mimeType: string) {
+  return extractableMimeTypes.has(mimeType);
+}
+
 export interface SyncCounters {
   filesDiscovered: number;
   filesIndexed: number;

@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import {
   isStaleSync,
+  isExtractableDriveMimeType,
   planSyncContinuation,
   reconcileInterruptedRun,
   terminalSyncStatus,
@@ -103,6 +104,16 @@ test("a file quarantined by a terminated batch does not block continuation", () 
   assert.equal(plan.filesFailed, 1);
 });
 
+test("metadata-only files are separated from extractable Drive formats", () => {
+  assert.equal(isExtractableDriveMimeType("application/pdf"), true);
+  assert.equal(
+    isExtractableDriveMimeType("application/vnd.google-apps.document"),
+    true,
+  );
+  assert.equal(isExtractableDriveMimeType("image/png"), false);
+  assert.equal(isExtractableDriveMimeType("application/zip"), false);
+});
+
 test("sync checkpoints pagination and counters before terminal completion", async () => {
   const [sync, client, repository, dashboard] = await Promise.all([
     readFile(new URL("../lib/google-drive/sync.ts", import.meta.url), "utf8"),
@@ -120,6 +131,7 @@ test("sync checkpoints pagination and counters before terminal completion", asyn
   assert.match(sync, /checkpointSync/);
   assert.match(sync, /SYNC_TOTAL_BUDGET_MS/);
   assert.match(sync, /SYNC_BATCH_SIZE/);
+  assert.match(sync, /UNSUPPORTED_BATCH_SIZE/);
   assert.match(sync, /existingSourceFiles/);
   assert.match(sync, /SYNC_FILE_INTERRUPTED/);
   assert.match(sync, /continuationNeeded/);

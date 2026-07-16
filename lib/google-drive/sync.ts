@@ -17,7 +17,11 @@ import {
   updateConnectorTokens,
 } from "./repository";
 import { refreshAccessToken } from "./oauth";
-import { planSyncContinuation, terminalSyncStatus } from "./sync-lifecycle";
+import {
+  isExtractableDriveMimeType,
+  planSyncContinuation,
+  terminalSyncStatus,
+} from "./sync-lifecycle";
 export interface StoredConnector {
   id: string;
   workspaceId: string;
@@ -27,6 +31,7 @@ export interface StoredConnector {
 }
 const SYNC_TOTAL_BUDGET_MS = 12_000;
 const SYNC_BATCH_SIZE = 2;
+const UNSUPPORTED_BATCH_SIZE = 20;
 export async function usableAccessToken(connector: StoredConnector) {
   if (
     connector.tokenExpiresAt &&
@@ -84,6 +89,12 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
     const previousFiles = await existingSourceFiles(connector.id),
       continuation = planSyncContinuation(inventory.files, previousFiles),
       { previousBySourceId, pendingFiles } = continuation,
+      unsupportedFiles = pendingFiles.filter(
+        (file) => !isExtractableDriveMimeType(file.mimeType),
+      ),
+      extractableFiles = pendingFiles.filter((file) =>
+        isExtractableDriveMimeType(file.mimeType),
+      ),
       processingDeadline = requestStartedAt + SYNC_TOTAL_BUDGET_MS;
     filesProcessed = continuation.filesProcessed;
     filesUnchanged = continuation.filesUnchanged;
@@ -101,12 +112,51 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
       paginationComplete: true,
       nextPageToken: null,
     });
-    for (let offset = 0; offset < pendingFiles.length; offset += SYNC_BATCH_SIZE) {
+    for (
+      let offset = 0;
+      offset < unsupportedFiles.length;
+      offset += UNSUPPORTED_BATCH_SIZE
+    ) {
       if (Date.now() >= processingDeadline) {
         stoppedEarly = true;
         break;
       }
-      const batch = pendingFiles.slice(offset, offset + SYNC_BATCH_SIZE);
+      const batch = unsupportedFiles.slice(
+        offset,
+        offset + UNSUPPORTED_BATCH_SIZE,
+      );
+      await Promise.all(
+        batch.map((file) =>
+          persistExtractedFile({
+            connectorId: connector.id,
+            workspaceId: connector.workspaceId,
+            file,
+            units: [],
+            extractionMode: "unsupported",
+            structuralFallbackReason: null,
+          }),
+        ),
+      );
+      filesProcessed += batch.length;
+      await checkpointSync(runId, {
+        filesDiscovered: discovered,
+        filesIndexed: indexed,
+        filesFailed: failed,
+        structuredFiles,
+        fallbackFiles,
+        filesAdded,
+        filesUpdated,
+        filesUnchanged,
+        paginationComplete: true,
+        nextPageToken: null,
+      });
+    }
+    for (let offset = 0; offset < extractableFiles.length; offset += SYNC_BATCH_SIZE) {
+      if (Date.now() >= processingDeadline) {
+        stoppedEarly = true;
+        break;
+      }
+      const batch = extractableFiles.slice(offset, offset + SYNC_BATCH_SIZE);
       await Promise.all(
         batch.map((file) =>
           markFileFailed({
