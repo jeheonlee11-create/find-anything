@@ -6,6 +6,10 @@ import {
   betaFeedback,
   betaInvitations,
   betaUsers,
+  connectors,
+  coverageReceipts,
+  indexingFailures,
+  indexingJobs,
   operationRateLimits,
 } from "@/db/schema";
 import type { AuthenticatedActor } from "@/lib/auth/api-authorization";
@@ -228,7 +232,7 @@ export async function rateLimit(
 }
 export async function betaAdminData() {
   const db = await getDb();
-  const [users, feedback, events, audit] = await Promise.all([
+  const [users, feedback, events, audit, connectorRows, jobs, failures, coverage] = await Promise.all([
     db
       .select({
         actorId: betaUsers.actorId,
@@ -250,7 +254,18 @@ export async function betaAdminData() {
       .from(betaAnalytics)
       .groupBy(betaAnalytics.event),
     db.select().from(betaAccessAudit).orderBy(desc(betaAccessAudit.createdAt)).limit(100),
+    db.select({ id: connectors.id, workspaceId: connectors.workspaceId, status: connectors.status, lastSyncAt: connectors.lastSyncAt, lastErrorCode: connectors.lastErrorCode, updatedAt: connectors.updatedAt }).from(connectors).orderBy(desc(connectors.updatedAt)).limit(100),
+    db.select({ id: indexingJobs.id, workspaceId: indexingJobs.workspaceId, connectorId: indexingJobs.connectorId, status: indexingJobs.status, processedCount: indexingJobs.processedCount, discoveredCount: indexingJobs.discoveredCount, failedCount: indexingJobs.failedCount, heartbeatAt: indexingJobs.heartbeatAt, lastErrorCode: indexingJobs.lastErrorCode, deploymentVersion: indexingJobs.deploymentVersion, startedAt: indexingJobs.startedAt, completedAt: indexingJobs.completedAt, updatedAt: indexingJobs.updatedAt }).from(indexingJobs).orderBy(desc(indexingJobs.updatedAt)).limit(100),
+    db.select({ category: indexingFailures.category, retryable: indexingFailures.retryable, count: sql<number>`count(*)` }).from(indexingFailures).where(sql`${indexingFailures.resolvedAt} is null`).groupBy(indexingFailures.category, indexingFailures.retryable),
+    db.select({ workspaceId: coverageReceipts.workspaceId, status: coverageReceipts.status, inventoryComplete: coverageReceipts.inventoryComplete, countsJson: coverageReceipts.countsJson, deploymentVersion: coverageReceipts.deploymentVersion, finishedAt: coverageReceipts.finishedAt }).from(coverageReceipts).orderBy(desc(coverageReceipts.finishedAt)).limit(50),
   ]);
+  const searchRows = await db.select({ propertiesJson: betaAnalytics.propertiesJson }).from(betaAnalytics).where(eq(betaAnalytics.event, "search_performed")).orderBy(desc(betaAnalytics.createdAt)).limit(1000),
+    parsedSearches = searchRows.map((row) => { try { return JSON.parse(row.propertiesJson) as { latencyMs?: number; zeroResults?: boolean; queryTerms?: string }; } catch { return {}; } }),
+    latencies = parsedSearches.map((row) => row.latencyMs).filter((value): value is number => typeof value === "number"),
+    terms = new Map<string, number>();
+  for (const row of parsedSearches) for (const term of (row.queryTerms ?? "").split(" ").filter(Boolean)) terms.set(term, (terms.get(term) ?? 0) + 1);
+  const finishedJobs = jobs.filter((job) => job.startedAt && job.completedAt),
+    indexingDurations = finishedJobs.map((job) => Date.parse(job.completedAt!) - Date.parse(job.startedAt!)).filter((value) => Number.isFinite(value) && value >= 0);
   return {
     users,
     feedback: feedback.map((row) => ({
@@ -261,7 +276,44 @@ export async function betaAdminData() {
     metrics: Object.fromEntries(
       events.map((row) => [row.event, Number(row.count)]),
     ),
+    insights: {
+      averageSearchLatencyMs: latencies.length ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : 0,
+      zeroResultSearches: parsedSearches.filter((row) => row.zeroResults).length,
+      averageIndexingDurationMs: indexingDurations.length ? Math.round(indexingDurations.reduce((a, b) => a + b, 0) / indexingDurations.length) : 0,
+      commonQueryTerms: [...terms.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 10),
+    },
     audit,
+    connectors: connectorRows,
+    jobs,
+    failures: failures.map((row) => ({ ...row, count: Number(row.count) })),
+    coverage,
   };
+}
+export async function adminUpdateIndexingJob(
+  jobId: string,
+  action: "retry" | "cancel" | "request_reauthorization",
+  adminActorId: string,
+) {
+  const db = await getDb(),
+    job = await db.select().from(indexingJobs).where(eq(indexingJobs.id, jobId)).get();
+  if (!job) return false;
+  const now = new Date().toISOString();
+  if (action === "retry")
+    await db.update(indexingJobs).set({ status: "queued", completedAt: null, terminalReason: null, updatedAt: now }).where(eq(indexingJobs.id, jobId));
+  else if (action === "cancel")
+    await db.update(indexingJobs).set({ status: "cancelled", terminalReason: "ADMIN_CANCELLED", completedAt: now, updatedAt: now }).where(eq(indexingJobs.id, jobId));
+  else {
+    await db.update(connectors).set({ status: "reauthorization_required", lastErrorCode: "ADMIN_REAUTHORIZATION_REQUESTED", updatedAt: now }).where(eq(connectors.id, job.connectorId));
+    await db.update(indexingJobs).set({ status: "reauthorization_required", terminalReason: "ADMIN_REAUTHORIZATION_REQUESTED", completedAt: now, updatedAt: now }).where(eq(indexingJobs.id, jobId));
+  }
+  await db.insert(betaAccessAudit).values({
+    id: `audit_${crypto.randomUUID()}`,
+    adminActorId,
+    targetActorId: null,
+    invitationId: null,
+    action: `indexing_job_${action}:${jobId}`,
+    createdAt: now,
+  });
+  return true;
 }
 export async function deleteBetaAnalyticsForActor(actorId: string) { const db = await getDb(); await db.delete(betaAnalytics).where(eq(betaAnalytics.actorId, actorId)); }

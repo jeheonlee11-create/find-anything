@@ -82,6 +82,11 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
     }
     void load();
   }, [load]);
+  useEffect(() => {
+    if (!data || !["syncing", "token_refreshing"].includes(data.connector?.status ?? "")) return;
+    const timer = window.setInterval(() => void load(), 5000);
+    return () => window.clearInterval(timer);
+  }, [data, load]);
   async function connect() {
     setBusy(true);
     setError("");
@@ -100,50 +105,44 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
   }
   async function sync() {
     setBusy(true);
-    setBusyLabel("Indexing…");
+    setBusyLabel("Queueing…");
     setError("");
-    let attempts = 0,
-      continuationNeeded = false;
-    do {
-      const controller = new AbortController(),
-        timeout = window.setTimeout(() => controller.abort(), 18_000);
-      try {
-        const response = await fetch("/api/connectors/google-drive/sync", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ workspaceId }),
-            signal: controller.signal,
-          }),
-          body = await response.json().catch(() => ({}));
-        window.clearTimeout(timeout);
-        attempts += 1;
-        if (!response.ok) {
-          if (response.status >= 500 && attempts < 40) {
-            continuationNeeded = true;
-            await new Promise((resolve) => setTimeout(resolve, 750));
-            continue;
-          }
-          setError(body.error?.message ?? "Indexing failed.");
-          break;
-        }
-        continuationNeeded = body.continuationNeeded === true && attempts < 40;
-        if (continuationNeeded)
-          setBusyLabel(`Continuing… ${attempts}/40`);
-      } catch {
-        window.clearTimeout(timeout);
-        attempts += 1;
-        continuationNeeded = attempts < 40;
-        if (!continuationNeeded)
-          setError(
-            "Indexing paused safely after repeated hosting interruptions. Your saved progress was preserved.",
-          );
-        else {
-          setBusyLabel(`Recovering… ${attempts}/40`);
-          await load();
-          await new Promise((resolve) => setTimeout(resolve, 750));
-        }
-      }
-    } while (continuationNeeded);
+    const response = await fetch("/api/connectors/google-drive/sync", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspaceId }),
+      }),
+      body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setError(body.error?.message ?? "Indexing could not be queued.");
+      setBusy(false);
+      return;
+    }
+    const jobId = typeof body.jobId === "string" ? body.jobId : "";
+    if (!jobId) {
+      await load();
+      setBusy(false);
+      return;
+    }
+    setBusyLabel("Indexing in background…");
+    for (let poll = 0; jobId && poll < 120; poll += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      const progressResponse = await fetch(
+          `/api/indexing-jobs/${encodeURIComponent(jobId)}?workspaceId=${encodeURIComponent(workspaceId)}`,
+          { cache: "no-store" },
+        ),
+        progress = await progressResponse.json().catch(() => ({})),
+        status = progress.job?.status as string | undefined;
+      if (progress.job)
+        setBusyLabel(
+          `${progress.job.processedCount}/${progress.job.discoveredCount || "?"} processed`,
+        );
+      if (
+        status &&
+        ["completed", "partial", "failed", "cancelled", "reauthorization_required"].includes(status)
+      )
+        break;
+    }
     await load();
     setBusy(false);
   }
@@ -170,7 +169,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
   if (loading)
     return (
       <section className="content-section">
-        <p>Loading workspace…</p>
+        <div className="search-loading" role="status"><span className="spinner" aria-hidden="true"/>Preparing your workspace…</div>
       </section>
     );
   if (!data)
@@ -203,7 +202,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
         {data.connector ? (
           <div className="connection-panel">
             <div>
-              <b>Status: {data.connector.status}</b>
+              <b>{friendlyConnectorStatus(data.connector.status)}</b>
               <p>
                 {data.connector.lastSyncAt
                   ? `Last indexed ${new Date(data.connector.lastSyncAt).toLocaleString()}`
@@ -214,15 +213,19 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
                   ? "Read-only Drive access verified"
                   : "Required read-only Drive permission is missing; reconnect Drive."}
               </p>
-              {data.connector.lastErrorCode && (
-                <p>Last error: {data.connector.lastErrorCode}</p>
-              )}
+              {data.connector.lastErrorCode && <p>{friendlyConnectorError(data.connector.lastErrorCode)}</p>}
             </div>
             {data.latestSync&&<div><p>{data.latestSync.paginationComplete?"The complete authorized Drive inventory was checked.":"Coverage is incomplete because Drive pagination did not finish."}</p><p>{data.latestSync.filesAdded} new · {data.latestSync.filesUpdated} updated · {data.latestSync.filesUnchanged} unchanged · {data.latestSync.filesRemoved} removed or no longer authorized</p></div>}
             <div>
-              <button className="button" disabled={busy} onClick={sync}>
-                {busy ? busyLabel : "Index now"}
-              </button>
+              {data.connector.status === "reauthorization_required" ? (
+                <button className="button" disabled={busy} onClick={connect}>
+                  {busy ? "Preparing…" : "Reconnect Google Drive"}
+                </button>
+              ) : (
+                <button className="button" disabled={busy || data.connector.status === "syncing"} onClick={sync}>
+                  {busy ? busyLabel : data.connector.status === "syncing" ? "Indexing…" : data.latestSync ? "Check for updates" : "Start indexing"}
+                </button>
+              )}
               <button disabled={busy} onClick={disconnect}>
                 Disconnect Google Drive
               </button>
@@ -285,7 +288,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
             </article>
           </div>
         ) : (
-          <p>No indexing run yet.</p>
+          <div className="empty-state"><b>Ready to build your searchable index</b><p>Start indexing above. You can leave this page and come back—saved progress is preserved.</p></div>
         )}
       </section>
       <section className="content-section">
@@ -322,7 +325,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
             ))}
           </div>
         ) : (
-          <p>No authorized files indexed yet.</p>
+          <div className="empty-state"><b>{data.connector ? "No searchable files yet" : "Connect Drive to get started"}</b><p>{data.connector ? "Start indexing, then this list will fill as files become searchable." : "Connect with read-only access. Find Anything never edits or deletes your Drive files."}</p></div>
         )}
       </section>
       <WorkspaceSearch workspaceId={workspaceId} />
@@ -337,4 +340,17 @@ function friendlyStructuralError(code: string) {
   if (code === "GOOGLE_SLIDES_HTTP_403")
     return "Google Slides structure unavailable: enable the Google Slides API in the OAuth project. Plain-text fallback remains searchable.";
   return "Structured extraction was unavailable; the safe export fallback remains searchable.";
+}
+function friendlyConnectorStatus(status: string) {
+  if (status === "connected") return "Google Drive connected";
+  if (status === "syncing") return "Indexing your Drive";
+  if (status === "token_refreshing") return "Refreshing your secure connection";
+  if (status === "reauthorization_required") return "Reconnect Google Drive to continue";
+  if (status === "error") return "Google Drive needs attention";
+  return "Google Drive disconnected";
+}
+function friendlyConnectorError(code: string) {
+  if (code.includes("TIME_BUDGET") || code.includes("PARTIAL")) return "Indexing paused safely. Your saved progress was preserved; choose Check for updates to continue.";
+  if (code.includes("TOKEN") || code.includes("AUTH")) return "Your Google permission needs to be renewed. Reconnect Drive to continue safely.";
+  return "Some files could not be processed. Searchable files remain available, and you can retry indexing.";
 }

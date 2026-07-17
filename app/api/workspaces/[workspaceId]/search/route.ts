@@ -101,7 +101,8 @@ export async function POST(
         },
         correlationId: requestId,
       });
-    await recordBetaEvent({ actorId: actor.actorId, workspaceId, event: "search_performed", properties: { mode, resultCount: response.totalMatches, zeroResults: response.totalMatches === 0 } });
+    const safeTerms = query.toLocaleLowerCase().split(/\s+/).filter((term) => /^[a-z][a-z'-]{1,30}$/.test(term)).slice(0, 8);
+    await recordBetaEvent({ actorId: actor.actorId, workspaceId, event: "search_performed", properties: { mode, resultCount: response.totalMatches, zeroResults: response.totalMatches === 0, latencyMs: Date.now() - startedAt, queryTerms: safeTerms.join(" ") } });
     return NextResponse.json(
       {
         ...response,

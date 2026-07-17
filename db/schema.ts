@@ -55,6 +55,12 @@ export const oauthStates = sqliteTable(
   },
   (t) => ({ expiryIdx: index("oauth_states_expiry_idx").on(t.expiresAt) }),
 );
+export const oauthRefreshLeases = sqliteTable("oauth_refresh_leases", {
+  connectorId: text("connector_id").primaryKey(),
+  ownerId: text("owner_id").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  createdAt: text("created_at").notNull(),
+});
 export const connectors = sqliteTable(
   "connectors",
   {
@@ -64,7 +70,14 @@ export const connectors = sqliteTable(
     provider: text("provider").notNull(),
     providerAccountId: text("provider_account_id"),
     status: text("status", {
-      enum: ["connected", "syncing", "error", "revoked"],
+      enum: [
+        "connected",
+        "token_refreshing",
+        "reauthorization_required",
+        "syncing",
+        "error",
+        "revoked",
+      ],
     }).notNull(),
     accessTokenCiphertext: text("access_token_ciphertext").notNull(),
     refreshTokenCiphertext: text("refresh_token_ciphertext"),
@@ -105,6 +118,16 @@ export const sourceFiles = sqliteTable(
     extractionError: text("extraction_error"),
     extractionMode: text("extraction_mode"),
     structuralFallbackReason: text("structural_fallback_reason"),
+    searchableStatus: text("searchable_status", {
+      enum: ["hidden", "searchable", "stale", "unauthorized"],
+    })
+      .notNull()
+      .default("hidden"),
+    permissionFingerprint: text("permission_fingerprint"),
+    providerRevision: text("provider_revision"),
+    extractionVersion: text("extraction_version").notNull().default("legacy"),
+    indexingVersion: text("indexing_version").notNull().default("legacy"),
+    tombstonedAt: text("tombstoned_at"),
     lastPermissionCheckedAt: text("last_permission_checked_at"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
@@ -451,4 +474,130 @@ export const betaAccessAudit = sqliteTable(
     createdAt: text("created_at").notNull(),
   },
   (t) => ({ createdIdx: index("beta_access_audit_created_idx").on(t.createdAt) }),
+);
+
+export const indexingJobs = sqliteTable(
+  "indexing_jobs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    connectorId: text("connector_id").notNull(),
+    requestedByUserId: text("requested_by_user_id").notNull(),
+    jobType: text("job_type").notNull().default("full_sync"),
+    status: text("status", {
+      enum: [
+        "queued",
+        "running",
+        "pausing",
+        "partial",
+        "completed",
+        "failed",
+        "cancelled",
+        "stale",
+        "reauthorization_required",
+      ],
+    }).notNull(),
+    inventoryCursor: text("inventory_cursor"),
+    continuationTokenHash: text("continuation_token_hash").notNull(),
+    processedCount: integer("processed_count").notNull().default(0),
+    discoveredCount: integer("discovered_count").notNull().default(0),
+    indexedCount: integer("indexed_count").notNull().default(0),
+    unsupportedCount: integer("unsupported_count").notNull().default(0),
+    failedCount: integer("failed_count").notNull().default(0),
+    structuralCount: integer("structural_count").notNull().default(0),
+    fallbackCount: integer("fallback_count").notNull().default(0),
+    retryCount: integer("retry_count").notNull().default(0),
+    continuationCount: integer("continuation_count").notNull().default(0),
+    terminalReason: text("terminal_reason"),
+    lastErrorCode: text("last_error_code"),
+    deploymentVersion: text("deployment_version").notNull().default("unknown"),
+    startedAt: text("started_at"),
+    heartbeatAt: text("heartbeat_at"),
+    completedAt: text("completed_at"),
+    nextAttemptAt: text("next_attempt_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => ({
+    workspaceIdx: index("indexing_jobs_workspace_idx").on(t.workspaceId),
+    connectorStatusIdx: index("indexing_jobs_connector_status_idx").on(
+      t.connectorId,
+      t.status,
+    ),
+  }),
+);
+
+export const indexingJobAttempts = sqliteTable(
+  "indexing_job_attempts",
+  {
+    id: text("id").primaryKey(),
+    jobId: text("job_id").notNull(),
+    attemptNumber: integer("attempt_number").notNull(),
+    status: text("status").notNull(),
+    startedAt: text("started_at").notNull(),
+    heartbeatAt: text("heartbeat_at").notNull(),
+    completedAt: text("completed_at"),
+    errorCode: text("error_code"),
+  },
+  (t) => ({
+    jobAttemptIdx: uniqueIndex("indexing_job_attempts_job_attempt_idx").on(
+      t.jobId,
+      t.attemptNumber,
+    ),
+  }),
+);
+
+export const indexingFailures = sqliteTable(
+  "indexing_failures",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    connectorId: text("connector_id").notNull(),
+    runId: text("run_id"),
+    jobId: text("job_id"),
+    providerFileId: text("provider_file_id").notNull(),
+    sanitizedFileName: text("sanitized_file_name"),
+    mimeType: text("mime_type").notNull(),
+    category: text("category").notNull(),
+    retryable: integer("retryable", { mode: "boolean" }).notNull(),
+    userExplanation: text("user_explanation").notNull(),
+    diagnosticCode: text("diagnostic_code").notNull(),
+    firstSeenAt: text("first_seen_at").notNull(),
+    lastSeenAt: text("last_seen_at").notNull(),
+    attemptCount: integer("attempt_count").notNull().default(1),
+    resolvedAt: text("resolved_at"),
+  },
+  (t) => ({
+    fileCategoryIdx: uniqueIndex("indexing_failures_file_category_idx").on(
+      t.connectorId,
+      t.providerFileId,
+      t.category,
+    ),
+    workspaceIdx: index("indexing_failures_workspace_idx").on(t.workspaceId),
+  }),
+);
+
+export const coverageReceipts = sqliteTable(
+  "coverage_receipts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    connectorId: text("connector_id").notNull(),
+    runId: text("run_id"),
+    jobId: text("job_id"),
+    status: text("status").notNull(),
+    inventoryComplete: integer("inventory_complete", { mode: "boolean" }).notNull(),
+    countsJson: text("counts_json").notNull(),
+    extractionVersion: text("extraction_version").notNull(),
+    indexingVersion: text("indexing_version").notNull(),
+    staleRecoveryJson: text("stale_recovery_json").notNull().default("{}"),
+    deploymentVersion: text("deployment_version").notNull(),
+    startedAt: text("started_at").notNull(),
+    finishedAt: text("finished_at").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => ({
+    workspaceIdx: index("coverage_receipts_workspace_idx").on(t.workspaceId),
+    jobIdx: uniqueIndex("coverage_receipts_job_idx").on(t.jobId),
+  }),
 );

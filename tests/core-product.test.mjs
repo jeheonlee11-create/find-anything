@@ -278,9 +278,10 @@ test("every workspace search persists exactly one trace and receipt with exports
   assert.match(audit, /resultSetHash/);
   assert.match(audit, /correlationId/);
   assert.match(audit, /actorId/);
-  assert.match(receipt, /format==="csv"/);
-  assert.match(receipt, /format==="json"/);
-  assert.match(trace, /traceForActor/);
+  assert.match(receipt, /format\s*===\s*"csv"/);
+  assert.match(receipt, /format\s*===\s*"json"/);
+  assert.match(receipt, /requireReceiptAccess/);
+  assert.match(trace, /requireTraceAccess/);
   assert.match(migration, /UNIQUE INDEX `retrieval_traces_search_idx`/);
 });
 test("developer API and MCP require scoped API keys and expose every requested tool", async () => {

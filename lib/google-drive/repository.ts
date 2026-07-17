@@ -1,16 +1,19 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   connectors,
   extractedUnits,
   fileVersions,
+  indexingFailures,
   memberships,
+  oauthRefreshLeases,
   oauthStates,
   sourceFiles,
   syncRuns,
   users,
   workspaces,
 } from "@/db/schema";
+import { classifyIndexingFailure } from "@/lib/indexing/failures";
 import type { AuthenticatedActor } from "@/lib/auth/api-authorization";
 import {
   isStaleSync,
@@ -91,7 +94,9 @@ export async function upsertConnector(input: typeof connectors.$inferInsert) {
         providerAccountId: input.providerAccountId,
         status: input.status,
         accessTokenCiphertext: input.accessTokenCiphertext,
-        refreshTokenCiphertext: input.refreshTokenCiphertext,
+        ...(input.refreshTokenCiphertext
+          ? { refreshTokenCiphertext: input.refreshTokenCiphertext }
+          : {}),
         tokenExpiresAt: input.tokenExpiresAt,
         grantedScopes: input.grantedScopes,
         lastErrorCode: null,
@@ -191,10 +196,67 @@ export async function updateConnectorTokens(
     .set({ ...input, updatedAt: new Date().toISOString() })
     .where(eq(connectors.id, id));
 }
+export async function acquireTokenRefreshLease(connectorId: string) {
+  const db = await getDb(),
+    now = new Date().toISOString(),
+    ownerId = crypto.randomUUID();
+  await db
+    .delete(oauthRefreshLeases)
+    .where(lt(oauthRefreshLeases.expiresAt, now));
+  await db
+    .insert(oauthRefreshLeases)
+    .values({
+      connectorId,
+      ownerId,
+      expiresAt: new Date(Date.now() + 30_000).toISOString(),
+      createdAt: now,
+    })
+    .onConflictDoNothing();
+  const lease = await db
+    .select()
+    .from(oauthRefreshLeases)
+    .where(eq(oauthRefreshLeases.connectorId, connectorId))
+    .get();
+  return lease?.ownerId === ownerId ? ownerId : null;
+}
+export async function releaseTokenRefreshLease(
+  connectorId: string,
+  ownerId: string,
+) {
+  const db = await getDb();
+  await db
+    .delete(oauthRefreshLeases)
+    .where(
+      and(
+        eq(oauthRefreshLeases.connectorId, connectorId),
+        eq(oauthRefreshLeases.ownerId, ownerId),
+      ),
+    );
+}
+export async function refreshedConnectorToken(connectorId: string) {
+  const db = await getDb();
+  return db
+    .select({
+      status: connectors.status,
+      accessTokenCiphertext: connectors.accessTokenCiphertext,
+      tokenExpiresAt: connectors.tokenExpiresAt,
+      lastErrorCode: connectors.lastErrorCode,
+    })
+    .from(connectors)
+    .where(eq(connectors.id, connectorId))
+    .get();
+}
 export async function setConnectorStatus(
   id: string,
-  status: "connected" | "syncing" | "error" | "revoked",
+  status:
+    | "connected"
+    | "token_refreshing"
+    | "reauthorization_required"
+    | "syncing"
+    | "error"
+    | "revoked",
   lastErrorCode: string | null = null,
+  recordSuccessfulSync = true,
 ) {
   const db = await getDb();
   await db
@@ -202,7 +264,10 @@ export async function setConnectorStatus(
     .set({
       status,
       lastErrorCode,
-      lastSyncAt: status === "connected" ? new Date().toISOString() : undefined,
+      lastSyncAt:
+        status === "connected" && recordSuccessfulSync
+          ? new Date().toISOString()
+          : undefined,
       updatedAt: new Date().toISOString(),
     })
     .where(eq(connectors.id, id));
@@ -388,7 +453,7 @@ export async function persistExtractedFile(input: {
       permissionsJson: JSON.stringify(input.file.permissions ?? []),
       parentsJson: JSON.stringify(input.file.parents ?? []),
       modifiedAt: input.file.modifiedTime,
-      webViewLink: input.file.webViewLink,
+      webViewLink: validatedGoogleSourceUrl(input.file.webViewLink),
       md5Checksum: input.file.md5Checksum,
       sizeBytes: input.file.size ? Number(input.file.size) : null,
       trashed: Boolean(input.file.trashed),
@@ -396,6 +461,10 @@ export async function persistExtractedFile(input: {
       extractionError: null,
       extractionMode: input.extractionMode ?? null,
       structuralFallbackReason: input.structuralFallbackReason ?? null,
+      searchableStatus: "hidden",
+      extractionVersion: "structural-v1",
+      indexingVersion: "literal-v1",
+      tombstonedAt: null,
       lastPermissionCheckedAt: now,
       createdAt: now,
       updatedAt: now,
@@ -409,7 +478,7 @@ export async function persistExtractedFile(input: {
         permissionsJson: JSON.stringify(input.file.permissions ?? []),
         parentsJson: JSON.stringify(input.file.parents ?? []),
         modifiedAt: input.file.modifiedTime,
-        webViewLink: input.file.webViewLink,
+        webViewLink: validatedGoogleSourceUrl(input.file.webViewLink),
         md5Checksum: input.file.md5Checksum,
         sizeBytes: input.file.size ? Number(input.file.size) : null,
         trashed: Boolean(input.file.trashed),
@@ -417,6 +486,10 @@ export async function persistExtractedFile(input: {
         extractionError: null,
         extractionMode: input.extractionMode ?? null,
         structuralFallbackReason: input.structuralFallbackReason ?? null,
+        searchableStatus: "hidden",
+        extractionVersion: "structural-v1",
+        indexingVersion: "literal-v1",
+        tombstonedAt: null,
         lastPermissionCheckedAt: now,
         updatedAt: now,
       },
@@ -448,6 +521,15 @@ export async function persistExtractedFile(input: {
     }));
     for (const row of rows) await db.insert(extractedUnits).values(row);
   }
+  await db
+    .update(sourceFiles)
+    .set({ searchableStatus: "searchable", updatedAt: now })
+    .where(
+      and(
+        eq(sourceFiles.id, fileId),
+        eq(sourceFiles.connectorId, input.connectorId),
+      ),
+    );
   return {
     fileId,
     unitIds: input.units.map((_, index) => `unit_${versionId}_${index}`),
@@ -476,6 +558,8 @@ export async function reconcileMissingSourceFiles(
         trashed: true,
         indexStatus: "failed",
         extractionError: "SOURCE_NO_LONGER_AUTHORIZED",
+        searchableStatus: "unauthorized",
+        tombstonedAt: new Date().toISOString(),
         lastPermissionCheckedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       })
@@ -523,12 +607,13 @@ export async function markFileFailed(input: {
       permissionsJson: JSON.stringify(input.file.permissions ?? []),
       parentsJson: JSON.stringify(input.file.parents ?? []),
       modifiedAt: input.file.modifiedTime,
-      webViewLink: input.file.webViewLink,
+      webViewLink: validatedGoogleSourceUrl(input.file.webViewLink),
       md5Checksum: input.file.md5Checksum,
       sizeBytes: input.file.size ? Number(input.file.size) : null,
       trashed: Boolean(input.file.trashed),
       indexStatus: "failed",
       extractionError: input.errorCode,
+      searchableStatus: "hidden",
       createdAt: now,
       updatedAt: now,
     })
@@ -537,7 +622,40 @@ export async function markFileFailed(input: {
       set: {
         indexStatus: "failed",
         extractionError: input.errorCode,
+        searchableStatus: "hidden",
         updatedAt: now,
+      },
+    });
+  const classified = classifyIndexingFailure(input.errorCode);
+  await db
+    .insert(indexingFailures)
+    .values({
+      id: `failure_${await shortHash(`${input.connectorId}:${input.file.id}:${classified.category}`)}`,
+      workspaceId: input.workspaceId,
+      connectorId: input.connectorId,
+      providerFileId: input.file.id,
+      sanitizedFileName: input.file.name.slice(0, 240),
+      mimeType: input.file.mimeType,
+      category: classified.category,
+      retryable: classified.retryable,
+      userExplanation: classified.explanation,
+      diagnosticCode: input.errorCode.slice(0, 100),
+      firstSeenAt: now,
+      lastSeenAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [
+        indexingFailures.connectorId,
+        indexingFailures.providerFileId,
+        indexingFailures.category,
+      ],
+      set: {
+        retryable: classified.retryable,
+        userExplanation: classified.explanation,
+        diagnosticCode: input.errorCode.slice(0, 100),
+        lastSeenAt: now,
+        attemptCount: sql`${indexingFailures.attemptCount} + 1`,
+        resolvedAt: null,
       },
     });
 }
@@ -568,4 +686,20 @@ async function shortHash(value: string) {
     .slice(0, 12)
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+function validatedGoogleSourceUrl(value?: string) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") return null;
+    const allowed = new Set([
+      "drive.google.com",
+      "docs.google.com",
+      "sheets.google.com",
+      "slides.google.com",
+    ]);
+    return allowed.has(url.hostname) ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }

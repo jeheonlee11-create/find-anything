@@ -1,22 +1,21 @@
 import { NextResponse } from "next/server";
-import { isAuthFailure, requireApiActor } from "@/lib/auth/api-authorization";
-import { actorWorkspace } from "@/lib/workspaces/repository";
+import {
+  isAuthFailure,
+  isAuthorizationFailure,
+  requireAuthenticatedUser,
+  requireWorkspaceMember,
+} from "@/lib/auth/authorization";
 import { liveWorkspaceCoverage } from "@/lib/workspace-search/coverage";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ workspaceId: string }> },
 ) {
-  const actor = await requireApiActor(request);
+  const actor = await requireAuthenticatedUser(request);
   if (isAuthFailure(actor)) return actor;
   const { workspaceId } = await params;
-  if (!(await actorWorkspace(actor.actorId, workspaceId)))
-    return NextResponse.json(
-      {
-        error: { code: "WORKSPACE_NOT_FOUND", message: "Workspace not found." },
-      },
-      { status: 404 },
-    );
+  const authorized = await requireWorkspaceMember(actor, workspaceId);
+  if (isAuthorizationFailure(authorized)) return authorized;
   try {
     return NextResponse.json(await liveWorkspaceCoverage(workspaceId), {
       headers: { "cache-control": "no-store" },

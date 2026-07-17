@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { runSampleRetrieval } from "../lib/retrieval/core.ts";
 
 process.env.BETA_ACCESS_MODE = "open-local-test";
 
@@ -24,13 +25,7 @@ async function request(path, init = {}) {
   );
 }
 async function search(query, extra = {}) {
-  const response = await request("/api/retrieval/search", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ query, ...extra }),
-  });
-  assert.equal(response.status, 200);
-  return response.json();
+  return runSampleRetrieval({ query, ...extra });
 }
 
 test("renders public product, growth, help, and trust routes with truthful disclosures", async () => {
@@ -239,13 +234,11 @@ test("receipt matches results and is labeled exportable rather than immutable", 
 
 test("Find All pagination is stable and non-duplicating across a large result set", async () => {
   const init = (page) =>
-    request("/api/retrieval/find-all", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ query: "air pollution", page, pageSize: 20 }),
-    }).then(async (response) => {
-      assert.equal(response.status, 200);
-      return response.json();
+    runSampleRetrieval({
+      query: "air pollution",
+      mode: "find_all",
+      page,
+      pageSize: 20,
     });
   const first = await init(1);
   const second = await init(2);
@@ -291,7 +284,8 @@ test("analytics requires authentication and uses privacy-safe first-party persis
   });
   assert.equal(invalid.status, 401);
   const source = await readFile(new URL("../app/api/analytics/route.ts", import.meta.url), "utf8");
-  assert.match(source, /requireApiActor/);
+  assert.match(source, /requireAuthenticatedUser/);
+  assert.match(source, /requireWorkspaceMember/);
   assert.match(source, /recordBetaEvent/);
   assert.doesNotMatch(source, /POSTHOG|capture\//i);
 });

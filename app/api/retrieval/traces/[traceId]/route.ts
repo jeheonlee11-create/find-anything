@@ -1,5 +1,22 @@
 import { NextResponse } from "next/server";
-import { runSampleRetrieval } from "@/lib/retrieval/core";
+import {
+  isAuthFailure,
+  requireAuthenticatedUser,
+  requireTraceAccess,
+  isAuthorizationFailure,
+} from "@/lib/auth/authorization";
+import { publicTrace } from "@/lib/workspace-search/serialization";
 
-export async function GET(_request:Request,{params}:{params:Promise<{traceId:string}>}){const {traceId}=await params;const response=runSampleRetrieval({query:"air pollution Detroit",mode:"ranked"});return NextResponse.json({...response.trace,requestedTraceId:traceId,notice:"Prototype route returns a generated sample trace; traces are not persisted."});}
-
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ traceId: string }> },
+) {
+  const actor = await requireAuthenticatedUser(request);
+  if (isAuthFailure(actor)) return actor;
+  const { traceId } = await params;
+  const trace = await requireTraceAccess(actor, traceId);
+  if (isAuthorizationFailure(trace)) return trace;
+  return NextResponse.json(publicTrace(trace), {
+    headers: { "cache-control": "no-store" },
+  });
+}

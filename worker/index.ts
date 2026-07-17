@@ -40,7 +40,30 @@ const worker = {
       }, allowedWidths);
     }
 
-    return handler.fetch(request, env, ctx);
+    const response = await handler.fetch(request, env, ctx),
+      jobId = response.headers.get("x-find-anything-job-id"),
+      jobToken = response.headers.get("x-find-anything-job-token");
+    if (jobId && jobToken) {
+      const continuationUrl = new URL("/api/internal/indexing/continue", request.url);
+      ctx.waitUntil(
+        fetch(continuationUrl, {
+          method: "POST",
+          headers: {
+            "x-find-anything-job-id": jobId,
+            "x-find-anything-job-token": jobToken,
+          },
+        }).then((next) => next.arrayBuffer()),
+      );
+      const headers = new Headers(response.headers);
+      headers.delete("x-find-anything-job-id");
+      headers.delete("x-find-anything-job-token");
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
+    }
+    return response;
   },
 };
 

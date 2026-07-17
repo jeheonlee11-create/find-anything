@@ -109,7 +109,7 @@ export interface WorkspaceSearchResponse {
     complete: boolean;
   };
 }
-export const MATCHING_POLICY_VERSION = "literal-and-v2";
+export const MATCHING_POLICY_VERSION = "literal-and-v3";
 
 const MIME_BY_TYPE: Record<Exclude<WorkspaceFileType, "all">, string> = {
   docs: "application/vnd.google-apps.document",
@@ -131,6 +131,14 @@ function countOccurrences(haystack: string, needle: string): number {
     position += needle.length;
   }
   return count;
+}
+
+function shortestTermDistance(text: string, terms: string[]): number | null {
+  if (terms.length < 2) return null;
+  const positions = terms.map((term) => text.indexOf(term));
+  return positions.some((position) => position < 0)
+    ? null
+    : Math.max(...positions) - Math.min(...positions);
 }
 
 function makeSnippet(text: string, terms: string[]): string | null {
@@ -280,6 +288,24 @@ export function searchWorkspaceFiles(input: {
           normalizedName === normalize(query) ? 40 : 20 * nameMatches.length;
         score += scoreBreakdown.title + scoreBreakdown.filename;
       }
+      const normalizedQuery = normalize(query),
+        exactTitle = normalizedName === normalizedQuery,
+        titlePhrase = normalizedQuery.length > 1 && normalizedName.includes(normalizedQuery),
+        contentPhrase = normalizedQuery.length > 1 && normalizedContent.includes(normalizedQuery);
+      if (exactTitle) {
+        explanation.push("exact title match");
+        scoreBreakdown.title += 120;
+        score += 120;
+      } else if (titlePhrase) {
+        explanation.push("exact phrase in filename");
+        scoreBreakdown.filename += 70;
+        score += 70;
+      }
+      if (contentPhrase) {
+        explanation.push("exact phrase in content");
+        scoreBreakdown.content += 45;
+        score += 45;
+      }
       if (mimeMatches.length) {
         explanation.push("MIME-type match");
         scoreBreakdown.mimeType = 12 * mimeMatches.length;
@@ -295,7 +321,16 @@ export function searchWorkspaceFiles(input: {
           ) * 4,
         );
         score += scoreBreakdown.content;
+        const distance = shortestTermDistance(normalizedContent, terms),
+          proximityBonus = distance === null ? 0 : Math.max(0, 24 - Math.floor(distance / 20));
+        if (proximityBonus) explanation.push("query terms appear close together");
+        scoreBreakdown.content += proximityBonus;
+        score += proximityBonus;
       }
+      const ageDays = Math.max(0, Date.now() - Date.parse(file.modifiedAt)) / 86_400_000,
+        recencyBonus = Number.isFinite(ageDays) ? Math.max(0, 12 - Math.floor(ageDays / 30)) : 0;
+      if (recencyBonus) explanation.push("recently modified");
+      score += recencyBonus;
     }
     const matchingUnits = file.units.filter(
         (unit) =>

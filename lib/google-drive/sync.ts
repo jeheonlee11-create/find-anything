@@ -7,16 +7,19 @@ import {
 import { extractDriveContent } from "./extraction";
 import {
   beginSync,
+  acquireTokenRefreshLease,
   checkpointSync,
   existingSourceFiles,
   finishSync,
   markFileFailed,
   persistExtractedFile,
   reconcileMissingSourceFiles,
+  refreshedConnectorToken,
+  releaseTokenRefreshLease,
   setConnectorStatus,
   updateConnectorTokens,
 } from "./repository";
-import { refreshAccessToken } from "./oauth";
+import { GoogleOAuthError, refreshAccessToken } from "./oauth";
 import {
   isExtractableDriveMimeType,
   planSyncContinuation,
@@ -32,25 +35,80 @@ export interface StoredConnector {
 const SYNC_TOTAL_BUDGET_MS = 12_000;
 const SYNC_BATCH_SIZE = 4;
 const UNSUPPORTED_BATCH_SIZE = 20;
+const refreshesInFlight = new Map<string, Promise<string>>();
 export async function usableAccessToken(connector: StoredConnector) {
   if (
     connector.tokenExpiresAt &&
     Date.parse(connector.tokenExpiresAt) > Date.now() + 60_000
   )
     return decryptSecret(connector.accessTokenCiphertext);
-  if (!connector.refreshTokenCiphertext)
+  const active = refreshesInFlight.get(connector.id);
+  if (active) return active;
+  const refresh = refreshConnectorAccessToken(connector).finally(() =>
+    refreshesInFlight.delete(connector.id),
+  );
+  refreshesInFlight.set(connector.id, refresh);
+  return refresh;
+}
+
+async function refreshConnectorAccessToken(connector: StoredConnector) {
+  if (!connector.refreshTokenCiphertext) {
+    await setConnectorStatus(
+      connector.id,
+      "reauthorization_required",
+      "GOOGLE_REFRESH_TOKEN_MISSING",
+    );
     throw new Error("GOOGLE_REFRESH_TOKEN_MISSING");
-  const refreshToken = await decryptSecret(connector.refreshTokenCiphertext),
-    tokens = await refreshAccessToken(refreshToken),
-    accessTokenCiphertext = await encryptSecret(tokens.access_token),
-    tokenExpiresAt = new Date(
-      Date.now() + tokens.expires_in * 1000,
-    ).toISOString();
-  await updateConnectorTokens(connector.id, {
-    accessTokenCiphertext,
-    tokenExpiresAt,
-  });
-  return tokens.access_token;
+  }
+  const leaseOwner = await acquireTokenRefreshLease(connector.id);
+  if (!leaseOwner) return waitForConcurrentRefresh(connector.id);
+  await setConnectorStatus(connector.id, "token_refreshing");
+  try {
+    const refreshToken = await decryptSecret(connector.refreshTokenCiphertext),
+      tokens = await refreshAccessToken(refreshToken),
+      tokenExpiresAt = new Date(
+        Date.now() + tokens.expires_in * 1000,
+      ).toISOString();
+    await updateConnectorTokens(connector.id, {
+      accessTokenCiphertext: await encryptSecret(tokens.access_token),
+      refreshTokenCiphertext: tokens.refresh_token
+        ? await encryptSecret(tokens.refresh_token)
+        : undefined,
+      tokenExpiresAt,
+    });
+    await setConnectorStatus(connector.id, "connected", null, false);
+    return tokens.access_token;
+  } catch (error) {
+    const reauthorization =
+      error instanceof GoogleOAuthError && error.code === "invalid_grant";
+    await setConnectorStatus(
+      connector.id,
+      reauthorization ? "reauthorization_required" : "error",
+      reauthorization
+        ? "GOOGLE_REAUTHORIZATION_REQUIRED"
+        : "GOOGLE_TOKEN_REFRESH_FAILED",
+    );
+    throw error;
+  } finally {
+    await releaseTokenRefreshLease(connector.id, leaseOwner);
+  }
+}
+
+async function waitForConcurrentRefresh(connectorId: string) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const current = await refreshedConnectorToken(connectorId);
+    if (!current) throw new Error("GOOGLE_CONNECTOR_NOT_FOUND");
+    if (current.status === "reauthorization_required")
+      throw new Error("GOOGLE_REAUTHORIZATION_REQUIRED");
+    if (
+      current.status === "connected" &&
+      current.tokenExpiresAt &&
+      Date.parse(current.tokenExpiresAt) > Date.now() + 60_000
+    )
+      return decryptSecret(current.accessTokenCiphertext);
+  }
+  throw new Error("GOOGLE_TOKEN_REFRESH_TIMEOUT");
 }
 export async function synchronizeGoogleDrive(connector: StoredConnector) {
   const requestStartedAt = Date.now(),
@@ -325,10 +383,19 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
       paginationComplete,
       errorCode: safeErrorCode(error),
     });
+    const requiresReauthorization =
+      (error instanceof GoogleOAuthError && error.code === "invalid_grant") ||
+      safeErrorCode(error) === "GOOGLE_REFRESH_TOKEN_MISSING";
     await setConnectorStatus(
       connector.id,
-      status === "partial" ? "connected" : "error",
-      safeErrorCode(error),
+      requiresReauthorization
+        ? "reauthorization_required"
+        : status === "partial"
+          ? "connected"
+          : "error",
+      requiresReauthorization
+        ? "GOOGLE_REAUTHORIZATION_REQUIRED"
+        : safeErrorCode(error),
     );
     throw error;
   }

@@ -1,58 +1,58 @@
 import { NextResponse } from "next/server";
-import { isAuthFailure, requireApiActor } from "@/lib/auth/api-authorization";
-import { connectorForActor } from "@/lib/google-drive/repository";
+import {
+  isAuthFailure,
+  isAuthorizationFailure,
+  requireAuthenticatedUser,
+  requireConnectorAccess,
+} from "@/lib/auth/authorization";
+import { enqueueIndexingJob } from "@/lib/indexing/jobs";
 import { synchronizeGoogleDrive } from "@/lib/google-drive/sync";
 import { rateLimit, recordBetaEvent } from "@/lib/beta/repository";
+
 export async function POST(request: Request) {
-  const actor = await requireApiActor(request);
+  const actor = await requireAuthenticatedUser(request);
   if (isAuthFailure(actor)) return actor;
-  if (!(await rateLimit(actor.actorId, "drive_sync", 120, 1800))) return NextResponse.json({ error: { code: "RATE_LIMITED", message: "Indexing is still processing a large Drive. Please wait before starting another run." } }, { status: 429 });
-  const body = (await request.json().catch(() => null)) as {
-      workspaceId?: unknown;
-    } | null,
+  if (!(await rateLimit(actor.actorId, "drive_sync", 30, 1800)))
+    return NextResponse.json(
+      { error: { code: "RATE_LIMITED", message: "An indexing job was recently requested. Check its progress before retrying." } },
+      { status: 429 },
+    );
+  const body = (await request.json().catch(() => null)) as { workspaceId?: unknown } | null,
     workspaceId = typeof body?.workspaceId === "string" ? body.workspaceId : "";
   if (!workspaceId)
     return NextResponse.json(
-      {
-        error: {
-          code: "WORKSPACE_REQUIRED",
-          message: "Select a workspace before syncing Drive.",
-        },
-      },
+      { error: { code: "WORKSPACE_REQUIRED", message: "Select a workspace before indexing Drive." } },
       { status: 400 },
     );
-  try {
-    const connector = await connectorForActor(actor, workspaceId);
-    if (!connector || connector.status === "revoked")
-      return NextResponse.json(
-        {
-          error: {
-            code: "GOOGLE_DRIVE_NOT_CONNECTED",
-            message: "Connect Google Drive before starting a sync.",
-          },
-        },
-        { status: 409 },
-      );
-    const result = await synchronizeGoogleDrive(connector);
-    await recordBetaEvent({ actorId: actor.actorId, workspaceId, event: "indexing_completed", properties: { filesIndexed: result.filesIndexed, structuralFiles: result.structuredFiles } });
+  const connector = await requireConnectorAccess(actor, workspaceId);
+  if (isAuthorizationFailure(connector)) return connector;
+  if (["revoked", "reauthorization_required"].includes(connector.status))
     return NextResponse.json(
-      { connectorId: connector.id, ...result },
-      { headers: { "cache-control": "no-store" } },
+      { error: { code: "GOOGLE_REAUTHORIZATION_REQUIRED", message: "Reconnect Google Drive before indexing." } },
+      { status: 409 },
     );
-  } catch (error) {
-    await recordBetaEvent({ actorId: actor.actorId, event: "indexing_failed" }).catch(() => undefined);
+  try {
+    if (process.env.ENABLE_DURABLE_INDEXING_JOBS === "false") {
+      const result = await synchronizeGoogleDrive(connector);
+      await recordBetaEvent({ actorId: actor.actorId, workspaceId, event: "indexing_completed", properties: { filesIndexed: result.filesIndexed, structuralFiles: result.structuredFiles } });
+      return NextResponse.json(result, { headers: { "cache-control": "no-store" } });
+    }
+    const job = await enqueueIndexingJob({ workspaceId, connectorId: connector.id, actorId: actor.actorId });
+    await recordBetaEvent({ actorId: actor.actorId, workspaceId, event: "indexing_started", properties: { resumed: job.resumed } });
+    const headers: Record<string, string> = { "cache-control": "no-store" };
+    if (job.continuationToken) {
+      headers["x-find-anything-job-id"] = job.jobId;
+      headers["x-find-anything-job-token"] = job.continuationToken;
+    }
     return NextResponse.json(
-      {
-        error: {
-          code: "GOOGLE_DRIVE_SYNC_FAILED",
-          message: "The Drive sync failed. Review connector status and retry.",
-        },
-        detail:
-          process.env.NODE_ENV === "development" && error instanceof Error
-            ? error.message
-            : undefined,
-      },
-      { status: 502, headers: { "cache-control": "no-store" } },
+      { jobId: job.jobId, status: job.alreadyActive ? "running" : "queued", message: job.alreadyActive ? "Indexing is already in progress." : "Indexing was queued. You may safely close this page." },
+      { status: 202, headers },
+    );
+  } catch {
+    await recordBetaEvent({ actorId: actor.actorId, workspaceId, event: "indexing_failed" }).catch(() => undefined);
+    return NextResponse.json(
+      { error: { code: "INDEXING_UNAVAILABLE", message: "Indexing could not start right now. Your saved files are safe; please try again shortly." } },
+      { status: 503, headers: { "cache-control": "no-store" } },
     );
   }
 }

@@ -55,9 +55,9 @@ export function WorkspaceOnboarding({ onboardingComplete }: { onboardingComplete
         <article><h3>Traces and receipts</h3><p>Explain what was searched, why results ranked, and how complete the answer is.</p></article>
       </div>
       <label><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /> I understand Drive access is read-only and I can disconnect at any time.</label>
-      <p><button className="button" disabled={!consent} onClick={finishOnboarding}>Continue to my workspace →</button></p>
+      <p><button className="button" disabled={!consent} onClick={finishOnboarding}>Start my 2-minute setup →</button></p>
     </section>}
-    {ready && <section className="content-section"><h2>1 · Create or choose a workspace</h2><p>Create a workspace, connect Drive, click Index now, then search for a phrase you remember.</p><form className="workspace-form" onSubmit={create}><label htmlFor="workspace-name">Workspace name</label><div><input id="workspace-name" value={name} onChange={(event) => setName(event.target.value)} minLength={2} maxLength={80} placeholder="My research" required/><button className="button" type="submit">Create workspace →</button></div></form></section>}
+    {ready && <section className="content-section"><h2>1 · Name your search space</h2><p>Use a simple name like “My Drive.” Next, you’ll connect Google Drive and start indexing.</p><form className="workspace-form" onSubmit={create}><label htmlFor="workspace-name">Workspace name</label><div><input id="workspace-name" value={name} onChange={(event) => setName(event.target.value)} minLength={2} maxLength={80} placeholder="My Drive" required/><button className="button" type="submit">Create and continue →</button></div></form></section>}
     {error && <p className="disclosure" role="alert">{error}</p>}
     {ready && <section className="content-section"><h2>Your workspaces</h2>{loading ? <p>Loading workspaces…</p> : workspaces.length ? <div className="workspace-list">{workspaces.map((workspace) => <button key={workspace.id} onClick={() => router.push(`/app/workspaces/${workspace.id}`)}><span><b>{workspace.name}</b><small>{workspace.id}</small></span><em>{workspace.role}</em></button>)}</div> : <p>No workspaces yet. Create the first one above.</p>}</section>}
   </>;

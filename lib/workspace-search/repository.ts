@@ -40,6 +40,7 @@ export async function indexedWorkspaceFiles(
       and(
         eq(sourceFiles.workspaceId, workspaceId),
         eq(sourceFiles.trashed, false),
+        eq(sourceFiles.searchableStatus, "searchable"),
       ),
     );
   const files = new Map<string, WorkspaceSearchFile>();

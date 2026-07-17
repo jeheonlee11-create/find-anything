@@ -3,7 +3,7 @@ import { isAuthFailure, requireApiActor } from "@/lib/auth/api-authorization";
 import { rateLimit, recordBetaEvent, saveFeedback } from "@/lib/beta/repository";
 import { actorWorkspace } from "@/lib/workspaces/repository";
 
-const categories = new Set(["missing_file", "missing_match", "incorrect_match", "poor_ranking", "incorrect_evidence", "confusing_interface", "permission_concern", "indexing_problem", "performance_problem", "other"]);
+const categories = new Set(["found_what_needed", "did_not_find", "missing_file", "missing_match", "incorrect_match", "poor_ranking", "incorrect_evidence", "confusing_interface", "permission_concern", "indexing_problem", "performance_problem", "other"]);
 
 export async function POST(request: Request) {
   const actor = await requireApiActor(request);

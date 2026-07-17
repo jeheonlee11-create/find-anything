@@ -21,7 +21,8 @@ export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
     [data, setData] = useState<AuditedSearch | null>(null),
     [cursors, setCursors] = useState<(string | null)[]>([null]),
     [loading, setLoading] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [searchCount, setSearchCount] = useState(0);
   async function run(
     cursor: string | null,
     nextMode = mode,
@@ -45,7 +46,7 @@ export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
       ),
       body = await response.json().catch(() => ({}));
     if (!response.ok) setError(body.error?.message ?? "Search failed.");
-    else setData(body);
+    else { setData(body); if (!cursor) setSearchCount((count) => count + 1); }
     setLoading(false);
   }
   function submit(event: FormEvent) {
@@ -77,12 +78,7 @@ export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
   return (
     <section className="content-section workspace-search">
       <h2>5 · Search workspace</h2>
-      <p>
-        Search real indexed metadata and exact extracted evidence. Best Matches
-        ranks literal matches by title, filename, type, and content. Find All
-        returns every literal match in a stable order. Semantic search is
-        paused.
-      </p>
+      <p>Search by a title, filename, phrase, or words you remember. Best Matches prioritizes exact phrases and recent files; Find All returns every literal match in a stable order.</p>
       <form onSubmit={submit} className="workspace-search-form">
         <label htmlFor="workspace-query">Search indexed Drive files</label>
         <div>
@@ -128,11 +124,8 @@ export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
           </select>
         </label>
       </div>
-      {error && (
-        <p className="disclosure" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <div className="empty-state" role="alert"><b>Search is temporarily unavailable</b><p>{error}</p><button onClick={() => void run(null)}>Try again</button></div>}
+      {loading && <div className="search-loading" role="status" aria-live="polite"><span className="spinner" aria-hidden="true"/>Searching your authorized files…</div>}
       {data && (
         <>
           <div className="workspace-search-summary">
@@ -250,7 +243,7 @@ export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
               ))}
             </div>
           ) : (
-            <p className="workspace-search-empty">No matching indexed files.</p>
+            <div className="empty-state"><b>No matches yet</b><p>Try fewer words, check the file-type filter, or use a phrase from the title. Find Anything only searches files that finished indexing.</p><button onClick={() => { setQuery(""); setFileType("all"); }}>Clear search</button></div>
           )}
           <div className="workspace-search-pagination">
             <button disabled={loading || cursors.length < 2} onClick={previous}>
@@ -260,7 +253,7 @@ export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
               Next
             </button>
           </div>
-          <BetaFeedback workspaceId={workspaceId} query={data.query} searchMode={data.mode} traceId={data.traceId} receiptId={data.receiptId} resultIds={data.results.map((result) => result.id)} />
+          <BetaFeedback workspaceId={workspaceId} query={data.query} searchMode={data.mode} traceId={data.traceId} receiptId={data.receiptId} resultIds={data.results.map((result) => result.id)} prompted={searchCount >= 3} />
         </>
       )}
     </section>

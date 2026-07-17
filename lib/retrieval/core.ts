@@ -1,5 +1,5 @@
-import { SAMPLE_ACTOR_ID, SAMPLE_WORKSPACE_ID, sampleFiles, sampleUnits } from "./sample-corpus";
-import type { CoverageReport, RetrievalCandidate, RetrievalFilters, RetrievalQuery, RetrievalReceipt, RetrievalResponse, RetrievalResult, RetrievalTrace, SearchMode, SourceFile, StructuralLocation } from "./types";
+import { SAMPLE_ACTOR_ID, SAMPLE_WORKSPACE_ID, sampleFiles, sampleUnits } from "./sample-corpus.ts";
+import type { CoverageReport, RetrievalCandidate, RetrievalFilters, RetrievalQuery, RetrievalReceipt, RetrievalResponse, RetrievalResult, RetrievalTrace, SearchMode, SourceFile, StructuralLocation } from "./types.ts";
 
 const STOP_WORDS = new Set(["a","an","and","are","did","do","document","file","find","for","had","i","in","is","it","me","my","of","on","the","to","was","where","which","with"]);
 const EXPANSIONS: Record<string,string[]> = { pollution:["pm1","emissions","environmental"], air:["atmospheric"], growth:["expansion","accounts","retention"], newest:["latest","final"], revenue:["forecast","enterprise"] };

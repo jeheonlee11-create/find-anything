@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireBetaAdmin } from "@/lib/beta/admin";
-import { betaAdminData, inviteBetaUser, rateLimit, recordBetaEvent, setBetaUserStatus } from "@/lib/beta/repository";
+import { adminUpdateIndexingJob, betaAdminData, inviteBetaUser, rateLimit, recordBetaEvent, setBetaUserStatus } from "@/lib/beta/repository";
 
 export async function GET(request: Request) {
   const admin = await requireBetaAdmin(request);
@@ -21,7 +21,11 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   const admin = await requireBetaAdmin(request);
   if (admin instanceof NextResponse) return admin;
-  const body = await request.json().catch(() => null) as { actorId?: unknown; status?: unknown } | null;
+  const body = await request.json().catch(() => null) as { actorId?: unknown; status?: unknown; jobId?: unknown; action?: unknown } | null;
+  if (typeof body?.jobId === "string" && ["retry", "cancel", "request_reauthorization"].includes(String(body.action))) {
+    const updated = await adminUpdateIndexingJob(body.jobId, body.action as "retry" | "cancel" | "request_reauthorization", admin.actorId);
+    return updated ? NextResponse.json({ updated: true }) : NextResponse.json({ error: { code: "JOB_NOT_FOUND", message: "Indexing job not found." } }, { status: 404 });
+  }
   if (typeof body?.actorId !== "string" || !["active", "disabled", "revoked"].includes(String(body.status))) return NextResponse.json({ error: { code: "INVALID_UPDATE", message: "Invalid beta account update." } }, { status: 400 });
   if (body.actorId === admin.actorId && body.status === "disabled") return NextResponse.json({ error: { code: "INVALID_UPDATE", message: "You cannot disable your own admin account." } }, { status: 400 });
   await setBetaUserStatus(body.actorId, body.status as "active" | "disabled" | "revoked", admin.actorId);
