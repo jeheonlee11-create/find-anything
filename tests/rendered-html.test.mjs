@@ -317,4 +317,6 @@ test("dark mode keeps primary actions readable", async () => {
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(css, /prefers-color-scheme:dark/);
   assert.match(css, /\.content-page \.button\{background:#caff4a;color:#121411/);
+  assert.match(css, /\.trust-grid span,.workspace-search-summary>\*\)\{background:#30352c;color:#f0f2ea/);
+  assert.match(css, /\.indexed-files a,.workspace-search-results a\)\{color:#caff4a/);
 });
