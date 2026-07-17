@@ -33,7 +33,9 @@ export async function enqueueIndexingJob(input: {
       )
       .get();
   if (existing) {
-    if (["queued", "running", "pausing"].includes(existing.status))
+    const heartbeat = existing.heartbeatAt ?? existing.updatedAt,
+      fresh = Date.now() - Date.parse(heartbeat) < 120_000;
+    if (["queued", "running", "pausing"].includes(existing.status) && fresh)
       return {
         jobId: existing.id,
         continuationToken: null,
@@ -45,6 +47,9 @@ export async function enqueueIndexingJob(input: {
       .set({
         status: "queued",
         continuationTokenHash: tokenHash,
+        retryCount: existing.retryCount + 1,
+        terminalReason: null,
+        lastErrorCode: null,
         updatedAt: now,
       })
       .where(eq(indexingJobs.id, existing.id));

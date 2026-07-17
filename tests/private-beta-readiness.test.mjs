@@ -64,6 +64,9 @@ test("durable indexing jobs checkpoint, prevent overlap, and hide continuation c
   assert.match(jobs, /coverageReceipts/);
   assert.match(route, /status: 202/);
   assert.match(worker, /headers\.delete\("x-find-anything-job-token"\)/);
+  assert.match(worker, /handler\.fetch/);
+  assert.doesNotMatch(worker, /fetch\(continuationUrl/);
+  assert.match(jobs, /120_000/);
   assert.match(schema, /indexingJobs/);
   assert.match(migration, /CREATE TABLE `indexing_jobs`/);
   assert.match(migration, /UPDATE `source_files`/);

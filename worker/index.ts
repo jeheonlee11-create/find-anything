@@ -44,16 +44,7 @@ const worker = {
       jobId = response.headers.get("x-find-anything-job-id"),
       jobToken = response.headers.get("x-find-anything-job-token");
     if (jobId && jobToken) {
-      const continuationUrl = new URL("/api/internal/indexing/continue", request.url);
-      ctx.waitUntil(
-        fetch(continuationUrl, {
-          method: "POST",
-          headers: {
-            "x-find-anything-job-id": jobId,
-            "x-find-anything-job-token": jobToken,
-          },
-        }).then((next) => next.arrayBuffer()),
-      );
+      ctx.waitUntil(runInternalContinuation(request.url, jobId, jobToken, env, ctx));
       const headers = new Headers(response.headers);
       headers.delete("x-find-anything-job-id");
       headers.delete("x-find-anything-job-token");
@@ -66,5 +57,35 @@ const worker = {
     return response;
   },
 };
+
+async function runInternalContinuation(
+  requestUrl: string,
+  jobId: string,
+  jobToken: string,
+  env: Env,
+  ctx: ExecutionContext,
+) {
+  const deadline = Date.now() + 25_000;
+  let shouldContinue = true;
+  while (shouldContinue && Date.now() < deadline) {
+    const continuationUrl = new URL("/api/internal/indexing/continue", requestUrl),
+      response = await handler.fetch(
+        new Request(continuationUrl, {
+          method: "POST",
+          headers: {
+            "x-find-anything-job-id": jobId,
+            "x-find-anything-job-token": jobToken,
+          },
+        }),
+        env,
+        ctx,
+      );
+    await response.arrayBuffer();
+    shouldContinue =
+      response.ok &&
+      response.headers.get("x-find-anything-job-id") === jobId &&
+      response.headers.get("x-find-anything-job-token") === jobToken;
+  }
+}
 
 export default worker;
