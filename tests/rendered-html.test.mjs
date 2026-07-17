@@ -312,3 +312,9 @@ test("public URLs are environment configurable and contain no personal-name bran
   assert.match(layout, /NEXT_PUBLIC_SITE_URL/);
   assert.doesNotMatch(`${config}${layout}${page}`, new RegExp(["min", "hwi"].join(""), "i"));
 });
+
+test("dark mode keeps primary actions readable", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(css, /prefers-color-scheme:dark/);
+  assert.match(css, /\.content-page \.button\{background:#caff4a;color:#121411/);
+});
