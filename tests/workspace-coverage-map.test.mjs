@@ -44,3 +44,14 @@ test("coverage UI uses the API snapshot and audit stores the identical object wi
   assert.equal((audit.match(/JSON\.stringify\(coverage\.snapshot\)/g) ?? []).length, 1);
   assert.doesNotMatch(audit, /console\.(?:log|error).*coverage/);
 });
+
+test("coverage UI exposes readable warning and limitation hooks for accessible dark mode", async () => {
+  const [ui, css] = await Promise.all([
+    readFile(new URL("../app/components/workspace-coverage-map.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(ui, /coverage-limitations/);
+  assert.match(ui, /className="coverage-warning" role="alert"/);
+  assert.match(css, /\.content-page \.coverage-card \.definition-grid p\{color:#d7dcd1/);
+  assert.match(css, /\.content-page \.coverage-card \.coverage-warning/);
+});

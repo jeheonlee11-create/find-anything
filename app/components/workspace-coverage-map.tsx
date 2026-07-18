@@ -13,7 +13,7 @@ export function WorkspaceCoverageMap({ workspaceId }: { workspaceId: string }) {
       .catch(() => { if (active) setUnavailable(true); });
     return () => { active = false; };
   }, [workspaceId]);
-  if (unavailable) return <p className="coverage-warning">Coverage could not be verified right now. Search continues to fail closed when permissions cannot be checked.</p>;
+  if (unavailable) return <p className="coverage-warning" role="alert">Coverage could not be verified right now. Search continues to fail closed when permissions cannot be checked.</p>;
   if (!coverage) return <div className="search-loading" role="status"><span className="spinner" aria-hidden="true"/>Checking observable coverage…</div>;
   const percent = (value: number | null) => value === null ? "Not observed" : `${Math.round(value * 100)}%`;
   return (
@@ -36,8 +36,8 @@ export function WorkspaceCoverageMap({ workspaceId }: { workspaceId: string }) {
           <p><b>Incomplete</b>{coverage.counts.pending} pending · {coverage.counts.unsupported} unsupported · pagination {coverage.paginationComplete ? "complete" : "partial"}.</p>
           <p><b>Freshness</b>{coverage.freshness.lastSuccessfulSyncAt ? new Date(coverage.freshness.lastSuccessfulSyncAt).toLocaleString() : "No successful sync observed"}.</p>
         </div>
-        {coverage.incompleteReasons.length > 0 && <p className="coverage-warning">{coverage.incompleteReasons.join(" ")}</p>}
-        <p>{coverage.limitations.join(" ")}</p>
+        {coverage.incompleteReasons.length > 0 && <p className="coverage-warning" role="alert">{coverage.incompleteReasons.join(" ")}</p>}
+        <p className="coverage-limitations">{coverage.limitations.join(" ")}</p>
       </details>
     </div>
   );
