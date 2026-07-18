@@ -22,6 +22,16 @@ import {
 export function actorWorkspaceId(actorId: string) {
   return `ws_${actorId.slice("actor_".length)}`;
 }
+export async function latestSyncForConnector(connectorId: string) {
+  const db = await getDb();
+  return db
+    .select()
+    .from(syncRuns)
+    .where(eq(syncRuns.connectorId, connectorId))
+    .orderBy(desc(syncRuns.startedAt))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+}
 export async function ensureActorWorkspace(actor: AuthenticatedActor) {
   const db = await getDb(),
     now = new Date().toISOString(),

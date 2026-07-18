@@ -8,7 +8,7 @@ import {
 } from "@/lib/workspace-search/core";
 import { indexedWorkspaceFiles } from "@/lib/workspace-search/repository";
 import { persistSearchAudit } from "@/lib/workspace-search/audit";
-import { connectorForActor } from "@/lib/google-drive/repository";
+import { connectorForActor, latestSyncForConnector } from "@/lib/google-drive/repository";
 import { currentAuthorizedDriveSourceIds } from "@/lib/google-drive/permission";
 import { rateLimit, recordBetaEvent } from "@/lib/beta/repository";
 import { calculateRetrievalConfidence } from "@/lib/workspace-search/confidence";
@@ -67,8 +67,11 @@ export async function POST(
         },
         { status: 409 },
       );
-    const permissionInventory = isLocalDemoWorkspace(workspaceId)
-        ? { sourceIds: undefined, filesDiscovered: 5, paginationComplete: true }
+    const demoSync = isLocalDemoWorkspace(workspaceId)
+        ? await latestSyncForConnector(connector.id)
+        : null,
+      permissionInventory = isLocalDemoWorkspace(workspaceId)
+        ? { sourceIds: undefined, filesDiscovered: demoSync?.filesDiscovered ?? 0, paginationComplete: demoSync?.paginationComplete ?? false }
         : await currentAuthorizedDriveSourceIds(connector),
       files = await indexedWorkspaceFiles(
         workspaceId,
@@ -91,6 +94,7 @@ export async function POST(
           authorizedFilesDiscovered: permissionInventory.filesDiscovered,
           paginationComplete: permissionInventory.paginationComplete,
           lastSuccessfulSyncAt: connector.lastSyncAt,
+          knownRemovedOrUnauthorized: demoSync?.filesRemoved ?? 0,
         },
         rankingContext: { unresolvedConflictFileIds: unresolvedFileIds, authoritativeFileIds, conflictAssessmentComplete: true },
       }),

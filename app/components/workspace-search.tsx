@@ -150,7 +150,9 @@ export function WorkspaceSearch({ workspaceId, demoMode = false }: { workspaceId
             <span>{data.coverage.filesSearched} files searched</span>
             <span>{data.coverage.authorizedFilesDiscovered} permission-scoped files</span>
             <span>
-              {data.coverage.paginationComplete ? "Coverage complete" : "Coverage incomplete"}
+              {demoMode
+                ? data.coverage.snapshot.status === "complete" ? "Coverage complete" : "Coverage partial"
+                : data.coverage.paginationComplete ? "Coverage complete" : "Coverage incomplete"}
             </span>
             <span>
               {data.coverage.lastSuccessfulSyncAt
@@ -163,7 +165,7 @@ export function WorkspaceSearch({ workspaceId, demoMode = false }: { workspaceId
             </span>
             <span>Deterministic literal retrieval · no semantic claims</span>
           </div>
-          {demoMode && data.results.length > 0 && <section className="demo-evidence-first"><span className="page-badge">1 · Exact answer evidence</span><h3>Inspect the sources before trusting an answer.</h3>{data.results.slice(0, 2).map((result) => <article key={result.id}><b>{result.name}</b>{result.citations[0] && <blockquote>{result.citations[0].excerpt}</blockquote>}</article>)}</section>}
+          {demoMode && data.results.length > 0 && <section className="demo-evidence-first"><span className="page-badge">Answer</span><h3>{data.results[0].citations[0]?.excerpt ?? data.results[0].snippet}</h3><details open><summary>Evidence · {data.results.slice(0, 2).length} cited sources</summary>{data.results.slice(0, 2).map((result) => <article key={result.id}><b>{result.name}</b>{result.citations[0] && <blockquote>{result.citations[0].excerpt}</blockquote>}</article>)}</details></section>}
           {!demoMode && !data.coverage.complete && (
             <p className="disclosure">
               Results are incomplete:{" "}
@@ -171,19 +173,10 @@ export function WorkspaceSearch({ workspaceId, demoMode = false }: { workspaceId
             </p>
           )}
           <RetrievalConfidencePanel confidence={data.confidence} />
-          {demoMode && !data.coverage.complete && <p className="disclosure"><b>3 · Coverage warning.</b> Results are incomplete: {data.coverage.incompleteReasons.join(" ")} One finance source is intentionally unavailable, and the connector snapshot is stale.</p>}
-          <SearchConflicts workspaceId={workspaceId} initial={data.conflicts} />
-          {demoMode && data.results[0] && <details className="citation-preview" open><summary>5 · Why the top result ranked first</summary><p>Rank #{data.results[0].ranking.position} · score {data.results[0].ranking.finalScore}</p><p>{data.results[0].ranking.conciseExplanation}. {data.results[0].ranking.rankedAboveNext}</p></details>}
-          <div className="audit-actions">
-            <a className="primary-audit-action" href={`/traces/${data.traceId}`}>{demoMode ? "6 · Replay this retrieval" : "Inspect retrieval trace"}</a>
-            <a href={`/receipts/${data.receiptId}`}>Open search receipt</a>
-            {demoMode && previousTraceId && <a href={`/diffs?before=${encodeURIComponent(previousTraceId)}&after=${encodeURIComponent(data.traceId)}`}>7 · Compare with previous retrieval</a>}
-            <button
-              onClick={() => navigator.clipboard.writeText(data.receiptId)}
-            >
-              Copy receipt ID
-            </button>
-          </div>
+          {demoMode && data.coverage.snapshot.status !== "complete" && <p className="disclosure demo-coverage-warning" role="alert"><b>Coverage warning.</b> {data.coverage.snapshot.incompleteReasons.join(" ")}</p>}
+          <SearchConflicts key={data.searchId} workspaceId={workspaceId} initial={data.conflicts} />
+          {demoMode && data.results[0] && <details className="citation-preview"><summary>Why this ranked</summary><p>Rank #{data.results[0].ranking.position} · score {data.results[0].ranking.finalScore}</p><p>{data.results[0].ranking.factors.some((factor) => factor.key === "authoritative_source" && factor.active) && /status:\s*approved/i.test(data.results[0].citations[0]?.excerpt ?? "") ? "This source ranked highest because it is newer, approved, and explicitly marked authoritative for the stored conflict." : data.results[0].ranking.conciseExplanation} {data.results[0].ranking.rankedAboveNext}</p></details>}
+          {demoMode ? <details className="citation-preview"><summary>Replay, trace, receipt, diff, and raw records</summary><div className="audit-actions"><a className="primary-audit-action" href={`/traces/${data.traceId}`}>Replay and trace</a><a href={`/receipts/${data.receiptId}`}>Receipt</a>{previousTraceId && <a href={`/diffs?before=${encodeURIComponent(previousTraceId)}&after=${encodeURIComponent(data.traceId)}`}>Diff</a>}<button onClick={() => navigator.clipboard.writeText(data.receiptId)}>Copy receipt ID</button></div><details><summary>Raw JSON identifiers</summary><pre>{JSON.stringify({ traceId: data.traceId, receiptId: data.receiptId, previousTraceId }, null, 2)}</pre></details></details> : <div className="audit-actions"><a className="primary-audit-action" href={`/traces/${data.traceId}`}>Inspect retrieval trace</a><a href={`/receipts/${data.receiptId}`}>Open search receipt</a><button onClick={() => navigator.clipboard.writeText(data.receiptId)}>Copy receipt ID</button></div>}
           {data.results.length ? (
             <div className="workspace-search-results">
               {data.results.map((result) => (

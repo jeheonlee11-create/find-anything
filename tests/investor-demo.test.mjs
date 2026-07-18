@@ -6,12 +6,13 @@ const fixture = await readFile(new URL("../scripts/demo-fixture.mjs", import.met
 const seed = await readFile(new URL("../scripts/demo-seed.mjs", import.meta.url), "utf8");
 const dashboard = await readFile(new URL("../app/components/workspace-dashboard.tsx", import.meta.url), "utf8");
 const search = await readFile(new URL("../app/components/workspace-search.tsx", import.meta.url), "utf8");
+const conflicts = await readFile(new URL("../app/components/search-conflicts.tsx", import.meta.url), "utf8");
 
 test("investor fixture is deterministic, synthetic, and representative", () => {
   assert.match(fixture, /ws_yc_demo_acme/);
-  assert.equal((fixture.match(/file\("/g) ?? []).length, 4);
-  for (const kind of ['"doc"', '"sheet"']) assert.match(fixture, new RegExp(kind));
-  for (const signal of ["Approved enterprise pricing", "Outdated draft", "Final enterprise launch date", "Draft enterprise launch date"]) assert.match(fixture, new RegExp(signal, "i"));
+  assert.equal((fixture.match(/file\("/g) ?? []).length, 7);
+  for (const name of ["Pricing Draft.pdf", "Pricing Final.pdf", "Sales Playbook.docx", "Launch Plan Draft.docx", "Launch Plan Final.docx", "Security Review.pdf", "API Version.md"]) assert.match(fixture, new RegExp(name.replace(".", "\\.")));
+  for (const signal of ["$120,000 per year", "$25,000 one-time", "$95,000 per year", "September 15, 2026", "September 1, 2026", "Current production version: v1.8.0"]) assert.match(fixture, new RegExp(signal.replaceAll("$", "\\$"), "i"));
   assert.doesNotMatch(fixture, /@gmail\.com|@openai\.com|minhwi|jeheon/i);
 });
 
@@ -20,6 +21,10 @@ test("seed resets only the dedicated demo workspace and never prints credentials
   assert.match(seed, /randomBytes\(24\)/);
   assert.match(seed, /mode: 0o600/);
   assert.doesNotMatch(seed, /console\.log\([^)]*apiKey/);
+  assert.match(seed, /SOURCE_NO_LONGER_AUTHORIZED/);
+  assert.match(seed, /conflict_demo_pricing/);
+  assert.match(seed, /conflict_demo_launch/);
+  assert.match(seed, /authoritativeFileId: demoFiles\[0\]\.id/);
 });
 
 test("demo UI exposes the evidence, trace, receipt, REST, and MCP story", () => {
@@ -30,10 +35,19 @@ test("demo UI exposes the evidence, trace, receipt, REST, and MCP story", () => 
   assert.match(search, /Open search receipt/);
   assert.match(search, /Exact evidence preview/);
   assert.match(search, /no semantic claims/i);
+  assert.match(search, /<span className="page-badge">Answer<\/span>/);
+  assert.match(search, /Why this ranked/);
+  assert.match(search, /newer, approved, and explicitly marked authoritative/);
+  assert.match(search, /Replay, trace, receipt, diff, and raw records/);
+  assert.match(search, /data\.coverage\.snapshot\.incompleteReasons/);
+  assert.match(search, /<SearchConflicts key=\{data\.searchId\}/);
+  assert.match(search, /Coverage partial/);
+  assert.match(conflicts, /formatConflictValue/);
 });
 
-test("the focused demo asks one pricing and launch question", () => {
-  assert.match(fixture, /What is our current enterprise pricing and launch date/);
+test("the focused demo supports pricing and launch questions", () => {
+  assert.match(fixture, /What is our current enterprise pricing/);
+  assert.match(fixture, /When are we launching/);
   assert.match(search, /What is our current enterprise pricing and launch date/);
   const corePromise = readFile(new URL("../lib/workspace-search/core.ts", import.meta.url), "utf8");
   return corePromise.then((core) => assert.match(core, /QUERY_STOP_WORDS/));

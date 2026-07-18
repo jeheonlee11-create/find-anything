@@ -180,6 +180,8 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
         <p className="disclosure">{error || "Workspace unavailable."}</p>
       </section>
     );
+  const accessibleFiles = data.files.filter((file) => file.indexStatus === "indexed").length,
+    unavailableFiles = data.latestSync?.filesRemoved ?? 0;
   return (
     <>
       <section className="content-section">
@@ -203,8 +205,8 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
         <>
           <section className="content-section demo-overview">
             <div className="demo-status-row">
-              <div><span className="page-badge">Decision demo · Synthetic</span><h2>What agents found—and what they missed</h2><p>Four authorized pricing and launch sources are searchable. One finance source is intentionally inaccessible, and the connector snapshot is stale.</p></div>
-              <div className="demo-metrics"><b>4 / 5</b><span>accessible</span><b>1</b><span>unavailable</span></div>
+              <div><span className="page-badge">Decision demo · Synthetic</span><h2>What agents found—and what they missed</h2><p>{accessibleFiles} Acme AI pricing, launch, security, sales, and engineering sources are searchable. The previously known Finance source is unavailable under the current authorization.</p></div>
+              <div className="demo-metrics"><b>{accessibleFiles} / {accessibleFiles + unavailableFiles}</b><span>accessible</span><b>{unavailableFiles}</b><span>unavailable</span></div>
             </div>
             <div className="demo-flow" aria-label="Retrieval flow"><span>Evidence</span><i>→</i><span>Confidence</span><i>→</i><span>Coverage</span><i>→</i><span>Conflict</span><i>→</i><span>Replay</span></div>
           </section>
