@@ -1,8 +1,9 @@
-import { and, eq, inArray, or } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { retrievalConflicts } from "@/db/schema";
 import type { WorkspaceSearchFile } from "@/lib/workspace-search/core";
 import { CONFLICT_DETECTION_VERSION, detectDeterministicConflicts } from "./core";
+import { filterAuthorizedConflictRows } from "./authorization";
 
 export async function refreshWorkspaceConflicts(workspaceId: string, files: WorkspaceSearchFile[]) {
   const authorized = files.filter((file) => file.workspaceId === workspaceId), detected = detectDeterministicConflicts(authorized), db = await getDb(), now = new Date().toISOString();
@@ -16,8 +17,8 @@ export async function refreshWorkspaceConflicts(workspaceId: string, files: Work
 
 export async function conflictsForFiles(workspaceId: string, fileIds: string[]) {
   if (!fileIds.length) return [];
-  const allowed = new Set(fileIds), db = await getDb(), rows = await db.select().from(retrievalConflicts).where(and(eq(retrievalConflicts.workspaceId, workspaceId), eq(retrievalConflicts.active, true), or(inArray(retrievalConflicts.leftFileId, fileIds), inArray(retrievalConflicts.rightFileId, fileIds))));
-  return rows.filter((row) => allowed.has(row.leftFileId) && allowed.has(row.rightFileId)).map(publicConflict);
+  const db = await getDb(), rows = await db.select().from(retrievalConflicts).where(and(eq(retrievalConflicts.workspaceId, workspaceId), eq(retrievalConflicts.active, true)));
+  return filterAuthorizedConflictRows(rows, fileIds).map(publicConflict);
 }
 
 export async function decideConflict(workspaceId: string, id: string, status: "authoritative_source" | "expected_difference" | "resolved" | "false_positive", actorId: string, authorizedFileIds: Set<string>, authoritativeFileId?: string, note?: string) {
