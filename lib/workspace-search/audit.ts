@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { retrievalTraces, searchReceipts } from "@/db/schema";
 import type { AuthenticatedActor } from "@/lib/auth/api-authorization";
 import type { WorkspaceSearchResponse } from "./core";
+import { buildRetrievalReplay, TRACE_EVENT_SCHEMA_VERSION } from "./replay";
 export async function persistSearchAudit(input: {
   actor: AuthenticatedActor;
   workspaceId: string;
@@ -45,7 +46,19 @@ export async function persistSearchAudit(input: {
           citations: result.citations.map((citation) => citation.contentHash),
         })),
       ),
-    );
+    ),
+    persistedConfidence = {
+      ...input.response.confidence,
+      workspaceId: input.workspaceId,
+      actorIdentity: input.actor.actorId,
+      sourceRetrievalId: searchId,
+    },
+    initialReplay = buildRetrievalReplay({
+      response: input.response,
+      requestStartedAt: input.startedAt,
+      stageLatency: input.stageLatency,
+      receiptCreated: false,
+    });
   await db.insert(retrievalTraces).values({
     id: traceId,
     searchId,
@@ -76,8 +89,22 @@ export async function persistSearchAudit(input: {
       auditPersistenceMs: 0,
     }),
     coverageJson: JSON.stringify(coverage),
+    coverageSnapshotVersion: coverage.snapshot.version,
+    conflictSnapshotVersion: "deterministic-conflicts-v1",
+    conflictSnapshotJson: JSON.stringify(input.response.conflicts),
+    rankingSnapshotVersion: "literal-ranking-v4",
+    rankingSnapshotJson: JSON.stringify(input.response.results.map((result) => ({ fileId: result.id, ...result.ranking }))),
+    traceEventSchemaVersion: TRACE_EVENT_SCHEMA_VERSION,
+    traceEventsJson: JSON.stringify(initialReplay),
     resultsJson: JSON.stringify(input.response.results),
-    stagesJson: JSON.stringify(input.response.diagnostics.stages),
+    stagesJson: JSON.stringify([
+      ...input.response.diagnostics.stages,
+      {
+        name: "Retrieval confidence",
+        status: "executed",
+        detail: `Calculated ${input.response.confidence.label} from ten stored evidence-quality factors using ${input.response.confidence.scoringVersion}.`,
+      },
+    ]),
     finalResultOrderJson: JSON.stringify(
       input.response.diagnostics.finalResultOrder,
     ),
@@ -99,6 +126,11 @@ export async function persistSearchAudit(input: {
         })),
     ),
     authorizedFilesConsidered: input.response.coverage.totalKnownFiles,
+    confidenceScore: input.response.confidence.score,
+    confidenceLabel: input.response.confidence.label,
+    confidenceJson: JSON.stringify(persistedConfidence),
+    confidenceScoringVersion: input.response.confidence.scoringVersion,
+    confidenceCalculatedAt: input.response.confidence.calculatedAt,
     createdAt,
     correlationId: input.correlationId ?? null,
   });
@@ -131,11 +163,29 @@ export async function persistSearchAudit(input: {
     configurationHash,
     indexSnapshotHash,
     resultSetHash,
+    confidenceScore: input.response.confidence.score,
+    confidenceLabel: input.response.confidence.label,
+    confidenceJson: JSON.stringify(persistedConfidence),
+    confidenceScoringVersion: input.response.confidence.scoringVersion,
+    confidenceCalculatedAt: input.response.confidence.calculatedAt,
+    coverageSnapshotVersion: coverage.snapshot.version,
+    coverageSnapshotJson: JSON.stringify(coverage.snapshot),
+    conflictSnapshotVersion: "deterministic-conflicts-v1",
+    conflictSnapshotJson: JSON.stringify(input.response.conflicts),
+    rankingSnapshotVersion: "literal-ranking-v4",
+    rankingSnapshotJson: JSON.stringify(input.response.results.map((result) => ({ fileId: result.id, ...result.ranking }))),
     correlationId: input.correlationId ?? null,
     createdAt,
   });
   const finalDuration = Math.max(0, Date.now() - input.startedAt),
-    auditPersistenceMs = Math.max(0, finalDuration - durationMs);
+    auditPersistenceMs = Math.max(0, finalDuration - durationMs),
+    finalReplay = buildRetrievalReplay({
+      response: input.response,
+      requestStartedAt: input.startedAt,
+      stageLatency: input.stageLatency,
+      receiptCreated: true,
+      receiptDurationMs: auditPersistenceMs,
+    });
   await db
     .update(retrievalTraces)
     .set({
@@ -144,6 +194,7 @@ export async function persistSearchAudit(input: {
         totalMs: finalDuration,
         auditPersistenceMs,
       }),
+      traceEventsJson: JSON.stringify(finalReplay),
     })
     .where(eq(retrievalTraces.id, traceId));
   await db

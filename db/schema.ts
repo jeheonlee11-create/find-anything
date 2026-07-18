@@ -233,6 +233,13 @@ export const retrievalTraces = sqliteTable(
     finalResultCount: integer("final_result_count").notNull(),
     latencyJson: text("latency_json").notNull(),
     coverageJson: text("coverage_json").notNull(),
+    coverageSnapshotVersion: text("coverage_snapshot_version"),
+    conflictSnapshotVersion: text("conflict_snapshot_version"),
+    conflictSnapshotJson: text("conflict_snapshot_json"),
+    rankingSnapshotVersion: text("ranking_snapshot_version"),
+    rankingSnapshotJson: text("ranking_snapshot_json"),
+    traceEventSchemaVersion: text("trace_event_schema_version"),
+    traceEventsJson: text("trace_events_json"),
     resultsJson: text("results_json").notNull(),
     stagesJson: text("stages_json").notNull().default("[]"),
     finalResultOrderJson: text("final_result_order_json")
@@ -245,6 +252,11 @@ export const retrievalTraces = sqliteTable(
     authorizedFilesConsidered: integer("authorized_files_considered")
       .notNull()
       .default(0),
+    confidenceScore: integer("confidence_score"),
+    confidenceLabel: text("confidence_label"),
+    confidenceJson: text("confidence_json"),
+    confidenceScoringVersion: text("confidence_scoring_version"),
+    confidenceCalculatedAt: text("confidence_calculated_at"),
     createdAt: text("created_at").notNull(),
     correlationId: text("correlation_id"),
   },
@@ -282,6 +294,17 @@ export const searchReceipts = sqliteTable(
     configurationHash: text("configuration_hash").notNull(),
     indexSnapshotHash: text("index_snapshot_hash"),
     resultSetHash: text("result_set_hash"),
+    confidenceScore: integer("confidence_score"),
+    confidenceLabel: text("confidence_label"),
+    confidenceJson: text("confidence_json"),
+    confidenceScoringVersion: text("confidence_scoring_version"),
+    confidenceCalculatedAt: text("confidence_calculated_at"),
+    coverageSnapshotVersion: text("coverage_snapshot_version"),
+    coverageSnapshotJson: text("coverage_snapshot_json"),
+    conflictSnapshotVersion: text("conflict_snapshot_version"),
+    conflictSnapshotJson: text("conflict_snapshot_json"),
+    rankingSnapshotVersion: text("ranking_snapshot_version"),
+    rankingSnapshotJson: text("ranking_snapshot_json"),
     correlationId: text("correlation_id"),
     createdAt: text("created_at").notNull(),
   },
@@ -336,6 +359,16 @@ export const fileRelationships = sqliteTable(
     ),
     workspaceIdx: index("file_relationships_workspace_idx").on(t.workspaceId),
   }),
+);
+export const retrievalConflicts = sqliteTable(
+  "retrieval_conflicts",
+  {
+    id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(), conflictType: text("conflict_type").notNull(), detectionVersion: text("detection_version").notNull(), detectionMethod: text("detection_method").notNull(),
+    leftFileId: text("left_file_id").notNull(), rightFileId: text("right_file_id").notNull(), leftValueJson: text("left_value_json").notNull(), rightValueJson: text("right_value_json").notNull(), leftCitationJson: text("left_citation_json").notNull(), rightCitationJson: text("right_citation_json").notNull(), newerFileId: text("newer_file_id"), relationshipInference: text("relationship_inference").notNull(), reasonsJson: text("reasons_json").notNull(),
+    status: text("status", { enum: ["unresolved", "authoritative_source", "expected_difference", "resolved", "false_positive"] }).notNull(), decisionJson: text("decision_json"), detectedAt: text("detected_at").notNull(), updatedAt: text("updated_at").notNull(),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+  },
+  (t) => ({ fingerprintIdx: uniqueIndex("retrieval_conflicts_fingerprint_idx").on(t.workspaceId, t.leftFileId, t.rightFileId, t.conflictType, t.leftValueJson, t.rightValueJson), workspaceIdx: index("retrieval_conflicts_workspace_idx").on(t.workspaceId), statusIdx: index("retrieval_conflicts_status_idx").on(t.status) }),
 );
 export const apiKeys = sqliteTable(
   "api_keys",

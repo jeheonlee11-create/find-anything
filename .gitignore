@@ -45,3 +45,6 @@ next-env.d.ts
 /outputs/
 /artifacts/
 /work/
+.demo-api-key
+demo/yc-video/
+.demo-seed.sql

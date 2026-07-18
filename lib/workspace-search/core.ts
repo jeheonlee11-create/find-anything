@@ -1,3 +1,10 @@
+import {
+  calculateRetrievalConfidence,
+  type RetrievalConfidence,
+} from "./confidence.ts";
+import { buildCoverageSnapshot, type CoverageSnapshot } from "./coverage-map.ts";
+import { calculateLiteralRanking, type RankingBreakdown } from "./ranking.ts";
+
 export type WorkspaceFileType = "all" | "docs" | "slides" | "sheets" | "pdf";
 export type WorkspaceSearchMode = "best" | "all";
 
@@ -50,9 +57,10 @@ export interface WorkspaceSearchResult {
     mimeType: number;
     content: number;
   };
+  ranking: RankingBreakdown;
   matchType: "literal";
   extractionMethod: string;
-  source: "google_drive";
+  source: "google_drive" | "demo_fixture";
 }
 
 export interface WorkspaceSearchResponse {
@@ -107,7 +115,12 @@ export interface WorkspaceSearchResponse {
     lastSuccessfulSyncAt: string | null;
     incompleteReasons: string[];
     complete: boolean;
+    snapshot: CoverageSnapshot;
   };
+  confidence: RetrievalConfidence;
+  conflicts: Array<{
+    id: string; conflictType: string; detectionVersion: string; detectionMethod: string; leftFileId: string; rightFileId: string; leftValue: unknown; rightValue: unknown; leftCitation: WorkspaceCitation & { fileName?: string }; rightCitation: WorkspaceCitation & { fileName?: string }; newerFileId: string | null; relationshipInference: string; reasons: string[]; status: string; decision: unknown;
+  }>;
 }
 export const MATCHING_POLICY_VERSION = "literal-and-v3";
 
@@ -120,6 +133,15 @@ const MIME_BY_TYPE: Record<Exclude<WorkspaceFileType, "all">, string> = {
 
 function normalize(value: string): string {
   return value.trim().toLocaleLowerCase();
+}
+const QUERY_STOP_WORDS = new Set([
+  "a", "an", "and", "are", "blocker", "blockers", "blocking", "each", "for", "from", "in", "is", "of",
+  "one", "the", "to", "what", "which", "who", "with",
+]);
+function queryTerms(value: string): string[] {
+  return normalize(value)
+    .split(/[^\p{L}\p{N}'-]+/u)
+    .filter((term) => term && !QUERY_STOP_WORDS.has(term));
 }
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -196,10 +218,12 @@ export function searchWorkspaceFiles(input: {
     authorizedFilesDiscovered: number;
     paginationComplete: boolean;
     lastSuccessfulSyncAt: string | null;
+    knownRemovedOrUnauthorized?: number;
   };
+  rankingContext?: { authoritativeFileIds?: Set<string>; unresolvedConflictFileIds?: Set<string>; conflictAssessmentComplete?: boolean };
 }): WorkspaceSearchResponse {
   const query = input.query.trim();
-  const terms = normalize(query).split(/\s+/).filter(Boolean);
+  const terms = queryTerms(query);
   const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 20));
   const offset = decodeWorkspaceSearchCursor(input.cursor);
   const workspaceFiles = input.files.filter(
@@ -238,6 +262,7 @@ export function searchWorkspaceFiles(input: {
     const normalizedMime = normalize(file.mimeType);
     const content = file.units.map((unit) => unit.text).join("\n");
     const normalizedContent = normalize(content);
+    const normalizedHeadings = normalize(file.units.filter((unit) => /heading|title/i.test(unit.unitType)).map((unit) => unit.text).join("\n"));
     const searchable = `${normalizedName}\n${normalizedMime}\n${normalizedContent}`;
     const titleHit =
         terms.length > 0 && terms.some((term) => normalizedName.includes(term)),
@@ -339,7 +364,18 @@ export function searchWorkspaceFiles(input: {
       ),
       citationUnits = (
         matchingUnits.length ? matchingUnits : file.units.slice(0, 1)
-      ).slice(0, 5);
+      ).slice(0, 5),
+      normalizedQuery = normalize(query),
+      exactTitle = normalizedName === normalizedQuery,
+      titlePhrase = normalizedQuery.length > 1 && normalizedName.includes(normalizedQuery),
+      contentPhrase = normalizedQuery.length > 1 && normalizedContent.includes(normalizedQuery),
+      titleTokenMatches = terms.filter((term) => normalizedName.includes(term)).length,
+      headingTokenMatches = terms.filter((term) => normalizedHeadings.includes(term)).length,
+      occurrenceCount = terms.reduce((total, term) => total + countOccurrences(normalizedContent, term), 0),
+      freshnessDays = Number.isFinite(Date.parse(file.modifiedAt)) ? Math.max(0, Date.now() - Date.parse(file.modifiedAt)) / 86_400_000 : null,
+      structuralCitation = citationUnits.some((unit) => unit.contentHash && Object.keys(unit.structuralLocation).length > 0),
+      ranking = calculateLiteralRanking({ exactTitle, titlePhrase, contentPhrase, titleTokenMatches, filenameTokenMatches: titleTokenMatches, headingTokenMatches, occurrenceCount, freshnessDays, structuralCitation, authoritative: input.rankingContext?.authoritativeFileIds?.has(file.id) ?? false, unresolvedConflict: input.rankingContext?.unresolvedConflictFileIds?.has(file.id) ?? false, conflictAssessmentComplete: input.rankingContext?.conflictAssessmentComplete ?? false });
+    score = ranking.finalScore;
     return [
       {
         id: file.id,
@@ -352,9 +388,10 @@ export function searchWorkspaceFiles(input: {
         snippet: makeSnippet(content, terms),
         score,
         scoreBreakdown,
+        ranking,
         matchType: "literal" as const,
         extractionMethod: file.extractionMode ?? "unknown",
-        source: "google_drive" as const,
+        source: (input.workspaceId === "ws_yc_demo_acme" ? "demo_fixture" : "google_drive") as "google_drive" | "demo_fixture",
         citations: citationUnits.map((unit) => ({
           fileId: file.id,
           sourceUrl: file.webViewLink,
@@ -381,6 +418,19 @@ export function searchWorkspaceFiles(input: {
   );
 
   const results = matches.slice(offset, offset + pageSize);
+  results.forEach((result, index) => {
+    result.ranking.position = offset + index + 1;
+    const next = matches[offset + index + 1];
+    result.ranking.rankedAboveNext = input.mode === "all"
+      ? "Find All uses exhaustive filename and stable file-ID order; score does not affect position."
+      : next
+      ? result.score !== next.score
+        ? `Ranked above the next result by ${result.score - next.score} scoring points.`
+        : result.modifiedAt !== next.modifiedAt
+          ? "Equal score; ranked above the next result by newer stored modified time."
+          : "Equal score and modified time; ranked by stable file ID."
+      : null;
+  });
   const nextOffset = offset + results.length;
   const failedFiles = workspaceFiles.filter(
     (file) => file.indexStatus === "failed",
@@ -407,7 +457,37 @@ export function searchWorkspaceFiles(input: {
         : null,
     ].filter(Boolean) as string[];
 
-  return {
+  const coverage: WorkspaceSearchResponse["coverage"] = {
+    totalKnownFiles: workspaceFiles.length,
+    filesSearched: indexedEligible.length,
+    indexedFiles,
+    failedFiles,
+    pendingFiles,
+    unsupportedFiles,
+    authorizedFilesDiscovered:
+      input.permissionContext?.authorizedFilesDiscovered ??
+      workspaceFiles.length,
+    paginationComplete,
+    lastSuccessfulSyncAt:
+      input.permissionContext?.lastSuccessfulSyncAt ?? null,
+    incompleteReasons,
+    complete: incompleteReasons.length === 0,
+    snapshot: buildCoverageSnapshot({
+      authorization: "authorized",
+      authorizedDiscovered: input.permissionContext?.authorizedFilesDiscovered ?? workspaceFiles.length,
+      knownInventoryRows: workspaceFiles.length,
+      indexed: indexedFiles,
+      searchable: workspaceFiles.filter((file) => file.indexStatus === "indexed" && file.units.length > 0).length,
+      failed: failedFiles,
+      pending: pendingFiles,
+      unsupported: unsupportedFiles,
+      knownRemovedOrUnauthorized: input.permissionContext?.knownRemovedOrUnauthorized ?? 0,
+      paginationComplete,
+      lastSuccessfulSyncAt: input.permissionContext?.lastSuccessfulSyncAt ?? null,
+      observedAt: retrievedAt,
+    }),
+  };
+  const response: WorkspaceSearchResponse = {
     query,
     mode: input.mode,
     fileType: input.fileType,
@@ -443,10 +523,10 @@ export function searchWorkspaceFiles(input: {
             "Authenticated membership was required before connector data was loaded.",
         },
         {
-          name: "Drive permission inventory",
+          name: input.workspaceId === "ws_yc_demo_acme" ? "Permission-scoped fixture inventory" : "Drive permission inventory",
           status: "executed",
           detail:
-            "Only IDs returned by the currently connected Google account were eligible.",
+            input.workspaceId === "ws_yc_demo_acme" ? "Only records assigned to the authorized synthetic demo workspace were eligible." : "Only IDs returned by the currently connected Google account were eligible.",
         },
         {
           name: "Literal retrieval",
@@ -465,21 +545,18 @@ export function searchWorkspaceFiles(input: {
       ],
       finalResultOrder: results.map((result) => result.id),
     },
-    coverage: {
-      totalKnownFiles: workspaceFiles.length,
-      filesSearched: indexedEligible.length,
-      indexedFiles,
-      failedFiles,
-      pendingFiles,
-      unsupportedFiles,
-      authorizedFilesDiscovered:
-        input.permissionContext?.authorizedFilesDiscovered ??
-        workspaceFiles.length,
-      paginationComplete,
-      lastSuccessfulSyncAt:
-        input.permissionContext?.lastSuccessfulSyncAt ?? null,
-      incompleteReasons,
-      complete: incompleteReasons.length === 0,
-    },
+    coverage,
+    confidence: null as unknown as RetrievalConfidence,
+    conflicts: [],
   };
+  response.confidence = calculateRetrievalConfidence({
+    coverage,
+    results,
+    permissionDecisionCount: permissionDecisions.length,
+    connector: { searched: 1, expectedConfigured: 1 },
+    unresolvedConflictCount: null,
+    conflictAssessmentComplete: false,
+    retrievalMode: "literal",
+  });
+  return response;
 }

@@ -117,6 +117,7 @@ export async function upsertConnector(input: typeof connectors.$inferInsert) {
 export async function connectorForActor(
   actor: AuthenticatedActor,
   workspaceId: string,
+  provider = "google_drive",
 ) {
   const db = await getDb();
   return db
@@ -126,12 +127,12 @@ export async function connectorForActor(
       and(
         eq(connectors.workspaceId, workspaceId),
         eq(connectors.actorId, actor.actorId),
-        eq(connectors.provider, "google_drive"),
+        eq(connectors.provider, provider),
       ),
     )
     .get();
 }
-export async function connectorForWorkspace(workspaceId: string) {
+export async function connectorForWorkspace(workspaceId: string, provider = "google_drive") {
   const db = await getDb();
   return db
     .select()
@@ -139,7 +140,7 @@ export async function connectorForWorkspace(workspaceId: string) {
     .where(
       and(
         eq(connectors.workspaceId, workspaceId),
-        eq(connectors.provider, "google_drive"),
+        eq(connectors.provider, provider),
       ),
     )
     .get();

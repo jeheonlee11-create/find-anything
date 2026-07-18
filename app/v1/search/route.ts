@@ -9,6 +9,9 @@ import {
 import { persistSearchAudit } from "@/lib/workspace-search/audit";
 import { connectorForWorkspace } from "@/lib/google-drive/repository";
 import { currentAuthorizedDriveSourceIds } from "@/lib/google-drive/permission";
+import { isLocalDemoWorkspace } from "@/lib/auth/api-authorization";
+import { calculateRetrievalConfidence } from "@/lib/workspace-search/confidence";
+import { conflictsForFiles, unresolvedConflictCount } from "@/lib/conflicts/repository";
 export async function POST(request: Request) {
   const requestId = request.headers.get("x-request-id") || crypto.randomUUID(),
     principal = await requireWorkspaceApiKey(request);
@@ -54,7 +57,7 @@ export async function POST(request: Request) {
       },
       { status: 400 },
     );
-  const connector = await connectorForWorkspace(principal.workspaceId);
+  const connector = await connectorForWorkspace(principal.workspaceId, isLocalDemoWorkspace(principal.workspaceId) ? "demo_fixture" : "google_drive");
   if (!connector || connector.status !== "connected")
     return NextResponse.json(
       {
@@ -67,7 +70,9 @@ export async function POST(request: Request) {
     );
   let permissionInventory;
   try {
-    permissionInventory = await currentAuthorizedDriveSourceIds(connector);
+    permissionInventory = isLocalDemoWorkspace(principal.workspaceId)
+      ? { sourceIds: undefined, filesDiscovered: 5, paginationComplete: true }
+      : await currentAuthorizedDriveSourceIds(connector);
   } catch {
     return NextResponse.json(
       {
@@ -90,6 +95,9 @@ export async function POST(request: Request) {
       principal.workspaceId,
       permissionInventory.sourceIds,
     ),
+    detectedConflicts = await conflictsForFiles(principal.workspaceId, files.map((file) => file.id)),
+    unresolvedFileIds = new Set(detectedConflicts.filter((item) => item.status === "unresolved").flatMap((item) => [item.leftFileId, item.rightFileId])),
+    authoritativeFileIds = new Set(detectedConflicts.filter((item) => item.status === "authoritative_source" && item.decision?.authoritativeFileId).map((item) => String(item.decision.authoritativeFileId))),
     response = searchWorkspaceFiles({
       workspaceId: principal.workspaceId,
       files,
@@ -103,8 +111,21 @@ export async function POST(request: Request) {
         paginationComplete: permissionInventory.paginationComplete,
         lastSuccessfulSyncAt: connector.lastSyncAt,
       },
+      rankingContext: { unresolvedConflictFileIds: unresolvedFileIds, authoritativeFileIds, conflictAssessmentComplete: true },
     }),
-    audit = await persistSearchAudit({
+    resultIds = new Set(response.results.map((result) => result.id));
+  response.conflicts = detectedConflicts.filter((item) => resultIds.has(item.leftFileId) || resultIds.has(item.rightFileId));
+  const conflictCount = unresolvedConflictCount(response.conflicts);
+  response.confidence = calculateRetrievalConfidence({
+    coverage: response.coverage,
+    results: response.results,
+    permissionDecisionCount: response.diagnostics.permissionDecisions.length,
+    connector: { searched: 1, expectedConfigured: 1 },
+    unresolvedConflictCount: conflictCount,
+    conflictAssessmentComplete: true,
+    retrievalMode: "literal",
+  });
+  const audit = await persistSearchAudit({
       actor: {
         actorId: principal.actorId,
         email: "api-key-principal@localhost.invalid",

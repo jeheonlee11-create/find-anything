@@ -2,6 +2,8 @@
 
 The live path is `/api/workspaces/:workspaceId/search` and `/v1/search` → authenticated workspace authorization → D1 source files and structural units → literal candidates → deterministic Best Matches ranking or complete Find All ordering → exact citations → one durable trace → one durable receipt.
 
+Each search also produces a versioned retrieval-confidence breakdown. The calculation uses measurable coverage, permissions, evidence, freshness, citation, conflict, accessibility, and retrieval-mode inputs. See [Retrieval confidence v1](./retrieval-confidence.md). It measures retrieval evidence quality, never the factual correctness of an answer.
+
 Structural units are Google Doc paragraphs, Slide elements and speaker notes, Sheet cells, and PDF text blocks. Each stores a source location and SHA-256 content hash. Coarse Drive export fallbacks remain labeled with only the location actually available.
 
 Semantic indexing and query-time embeddings are paused. Active sync, product search, REST search, and MCP search make no OpenAI API calls. Existing dormant experimental code and schema are not part of the active retrieval path and must not be enabled until explicitly authorized.

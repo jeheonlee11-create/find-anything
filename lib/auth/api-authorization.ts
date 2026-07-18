@@ -4,6 +4,10 @@ import {betaAccess} from "@/lib/beta/repository";
 const AUTHENTICATED_EMAIL_HEADER = "oai-authenticated-user-email";
 const LOCAL_DEVELOPMENT_EMAIL = "local-oauth-tester@localhost.invalid";
 export const DEMO_WORKSPACE_ID = "ws_synthetic_demo";
+export const YC_DEMO_WORKSPACE_ID = "ws_yc_demo_acme";
+export function isLocalDemoWorkspace(workspaceId: string) {
+  return process.env.NODE_ENV === "development" && workspaceId === YC_DEMO_WORKSPACE_ID;
+}
 
 export interface AuthenticatedActor {
   actorId: string;

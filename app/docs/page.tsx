@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   description: "Live workspace retrieval API and MCP contracts.",
 };
 const endpoints = [
-  ["POST", "/v1/search", "Live workspace search with trace and receipt"],
+  ["POST", "/v1/search", "Live search with evidence, versioned confidence, trace, and receipt"],
   ["GET", "/v1/searches/:searchId", "Durable search record"],
   ["GET", "/v1/searches/:searchId/results", "Cursor-paginated stored results"],
   ["GET", "/v1/retrieval-traces/:traceId", "Real runtime trace"],
@@ -85,8 +85,8 @@ export default function DocsPage() {
         <ul className="status-list">
           <li>
             <b>Live:</b> Google Drive indexing, workspace isolation, literal
-            search, exact citations, traces, receipts, lineage, API keys, and
-            MCP.
+            search, exact citations, versioned retrieval-confidence factors,
+            traces, receipts, lineage, API keys, and MCP.
           </li>
             <li><b>Paused:</b> semantic ranking and embeddings are disconnected from active runtime paths until explicitly authorized.</li>
           <li>

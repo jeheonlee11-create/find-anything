@@ -7,6 +7,8 @@ import {
   indexingJobs,
 } from "@/db/schema";
 import { synchronizeGoogleDrive } from "@/lib/google-drive/sync";
+import { indexedWorkspaceFiles } from "@/lib/workspace-search/repository";
+import { refreshWorkspaceConflicts } from "@/lib/conflicts/repository";
 
 export const INDEXING_VERSION = "literal-v1";
 export const EXTRACTION_VERSION = "structural-v1";
@@ -201,7 +203,8 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
       .update(indexingJobAttempts)
       .set({ status: "completed", completedAt: finishedAt, heartbeatAt: finishedAt })
       .where(eq(indexingJobAttempts.id, attemptId));
-    if (!result.continuationNeeded)
+    if (!result.continuationNeeded) {
+      await refreshWorkspaceConflicts(claimed.workspaceId, await indexedWorkspaceFiles(claimed.workspaceId));
       await persistCoverageReceipt({
         job: claimed,
         runId: result.runId,
@@ -222,6 +225,7 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
         },
         finishedAt,
       });
+    }
     return { jobId, status, continuationNeeded: result.continuationNeeded };
   } catch (error) {
     const code = sanitizedErrorCode(error),

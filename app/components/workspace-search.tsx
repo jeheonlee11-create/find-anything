@@ -2,6 +2,8 @@
 import { type FormEvent, useState } from "react";
 import { LineagePanel } from "@/app/components/lineage-panel";
 import { BetaFeedback } from "@/app/components/beta-feedback";
+import { RetrievalConfidencePanel } from "@/app/components/retrieval-confidence";
+import { SearchConflicts } from "@/app/components/search-conflicts";
 import { formatStructuralLocation } from "@/lib/workspace-search/citations";
 import type {
   WorkspaceFileType,
@@ -14,7 +16,7 @@ type AuditedSearch = WorkspaceSearchResponse & {
   receiptId: string;
   retrieval: { kind: "literal"; semanticPaused: true };
 };
-export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
+export function WorkspaceSearch({ workspaceId, demoMode = false }: { workspaceId: string; demoMode?: boolean }) {
   const [query, setQuery] = useState(""),
     [mode, setMode] = useState<WorkspaceSearchMode>("best"),
     [fileType, setFileType] = useState<WorkspaceFileType>("all"),
@@ -22,7 +24,8 @@ export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
     [cursors, setCursors] = useState<(string | null)[]>([null]),
     [loading, setLoading] = useState(false),
     [error, setError] = useState(""),
-    [searchCount, setSearchCount] = useState(0);
+    [searchCount, setSearchCount] = useState(0),
+    [previousTraceId, setPreviousTraceId] = useState<string | null>(null);
   async function run(
     cursor: string | null,
     nextMode = mode,
@@ -46,7 +49,7 @@ export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
       ),
       body = await response.json().catch(() => ({}));
     if (!response.ok) setError(body.error?.message ?? "Search failed.");
-    else { setData(body); if (!cursor) setSearchCount((count) => count + 1); }
+    else { if (!cursor && data?.traceId) setPreviousTraceId(data.traceId); setData(body); if (!cursor) setSearchCount((count) => count + 1); }
     setLoading(false);
   }
   function submit(event: FormEvent) {
@@ -77,16 +80,18 @@ export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
   }
   return (
     <section className="content-section workspace-search">
-      <h2>5 · Search workspace</h2>
-      <p>Search by a title, filename, phrase, or words you remember. Best Matches prioritizes exact phrases and recent files; Find All returns every literal match in a stable order.</p>
+      <span className="page-badge">{demoMode ? "Live retrieval" : "Search"}</span>
+      <h2>{demoMode ? "What is our current enterprise pricing and launch date?" : "5 · Search workspace"}</h2>
+      <p>{demoMode ? "Run one focused retrieval across approved, outdated, draft, final, stale, and inaccessible evidence." : "Search by a title, filename, phrase, or words you remember. Best Matches prioritizes exact phrases and recent files; Find All returns every literal match in a stable order."}</p>
+      {demoMode && <div className="demo-query-chips"><button onClick={() => setQuery("What is our current enterprise pricing and launch date?")}>Use demo question</button><button onClick={() => setQuery("enterprise pricing launch date")}>Use compact query</button></div>}
       <form onSubmit={submit} className="workspace-search-form">
-        <label htmlFor="workspace-query">Search indexed Drive files</label>
+        <label htmlFor="workspace-query">{demoMode ? "Ask the indexed workspace" : "Search indexed Drive files"}</label>
         <div>
           <input
             id="workspace-query"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Try Princeton, scholarship, or presentation"
+            placeholder={demoMode ? "What is our current enterprise pricing and launch date?" : "Try Princeton, scholarship, or presentation"}
           />
           <button className="button" disabled={loading}>
             {loading ? "Searching…" : "Search"}
@@ -143,14 +148,9 @@ export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
                 : "Indexing incomplete"}
             </span>
             <span>{data.coverage.filesSearched} files searched</span>
+            <span>{data.coverage.authorizedFilesDiscovered} permission-scoped files</span>
             <span>
-              {data.coverage.authorizedFilesDiscovered} authorized files
-              discovered
-            </span>
-            <span>
-              {data.coverage.paginationComplete
-                ? "Drive inventory complete"
-                : "Drive inventory incomplete"}
+              {data.coverage.paginationComplete ? "Coverage complete" : "Coverage incomplete"}
             </span>
             <span>
               {data.coverage.lastSuccessfulSyncAt
@@ -161,17 +161,23 @@ export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
               {data.coverage.failedFiles} failed · {data.coverage.pendingFiles}{" "}
               pending
             </span>
-            <span>Literal full-text search · no paid APIs</span>
+            <span>Deterministic literal retrieval · no semantic claims</span>
           </div>
-          {!data.coverage.complete && (
+          {demoMode && data.results.length > 0 && <section className="demo-evidence-first"><span className="page-badge">1 · Exact answer evidence</span><h3>Inspect the sources before trusting an answer.</h3>{data.results.slice(0, 2).map((result) => <article key={result.id}><b>{result.name}</b>{result.citations[0] && <blockquote>{result.citations[0].excerpt}</blockquote>}</article>)}</section>}
+          {!demoMode && !data.coverage.complete && (
             <p className="disclosure">
               Results are incomplete:{" "}
               {data.coverage.incompleteReasons.join(" ")}
             </p>
           )}
+          <RetrievalConfidencePanel confidence={data.confidence} />
+          {demoMode && !data.coverage.complete && <p className="disclosure"><b>3 · Coverage warning.</b> Results are incomplete: {data.coverage.incompleteReasons.join(" ")} One finance source is intentionally unavailable, and the connector snapshot is stale.</p>}
+          <SearchConflicts workspaceId={workspaceId} initial={data.conflicts} />
+          {demoMode && data.results[0] && <details className="citation-preview" open><summary>5 · Why the top result ranked first</summary><p>Rank #{data.results[0].ranking.position} · score {data.results[0].ranking.finalScore}</p><p>{data.results[0].ranking.conciseExplanation}. {data.results[0].ranking.rankedAboveNext}</p></details>}
           <div className="audit-actions">
-            <a href={`/traces/${data.traceId}`}>View retrieval trace</a>
-            <a href={`/receipts/${data.receiptId}`}>Export search receipt</a>
+            <a className="primary-audit-action" href={`/traces/${data.traceId}`}>{demoMode ? "6 · Replay this retrieval" : "Inspect retrieval trace"}</a>
+            <a href={`/receipts/${data.receiptId}`}>Open search receipt</a>
+            {demoMode && previousTraceId && <a href={`/diffs?before=${encodeURIComponent(previousTraceId)}&after=${encodeURIComponent(data.traceId)}`}>7 · Compare with previous retrieval</a>}
             <button
               onClick={() => navigator.clipboard.writeText(data.receiptId)}
             >
@@ -182,33 +188,24 @@ export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
             <div className="workspace-search-results">
               {data.results.map((result) => (
                 <article key={result.id}>
-                  <div>
-                    <h3>{highlight(result.name, data.query)}</h3>
-                    <small>{result.mimeType}</small>
+                  <div className="result-body">
+                    <div className="result-heading"><span className="file-kind">{fileKind(result.mimeType)}</span><div><h3>{highlight(result.name, data.query)}</h3><small>{result.mimeType}</small></div></div>
                     <p>
                       <b>{result.matchType} match</b> ·{" "}
-                      {result.explanation.join(" · ")}
+                      {result.ranking.conciseExplanation}
                     </p>
                     <details className="citation-preview">
                       <summary>Why this result?</summary>
+                      <p>Rank #{result.ranking.position} · score {result.ranking.finalScore} · {result.ranking.rankingVersion}</p>
+                      <p>{result.ranking.conciseExplanation}. {result.ranking.rankedAboveNext}</p>
+                      <div className="ranking-factor-list">{result.ranking.factors.filter((factor) => factor.active).map((factor) => <span key={factor.key}><b>{factor.contribution > 0 ? "+" : ""}{factor.contribution}</b>{factor.key.replaceAll("_", " ")}<small>{factor.explanation}</small></span>)}</div>
+                      <details><summary>Advanced raw breakdown</summary><pre>{JSON.stringify(result.ranking.advancedRawBreakdown, null, 2)}</pre><p>Inactive: {result.ranking.inactiveFactors.map((factor) => factor.key.replaceAll("_", " ")).join(", ") || "none"}</p></details>
                       <p>
-                        Matched fields:{" "}
-                        {result.explanation.join(", ") || "indexed file"}.
-                      </p>
-                      <p>
-                        Ranking score: {result.score}. Title{" "}
-                        {result.scoreBreakdown.title}; filename{" "}
-                        {result.scoreBreakdown.filename}; type{" "}
-                        {result.scoreBreakdown.mimeType}; content{" "}
-                        {result.scoreBreakdown.content}.
-                      </p>
-                      <p>
-                        Extraction: {result.extractionMethod}. Source: Google
-                        Drive.
+                        Extraction: {result.extractionMethod}. Source: {demoMode ? "synthetic demo workspace" : "Google Drive"}.
                       </p>
                     </details>
                     {result.citations[0] ? (
-                      <details className="citation-preview">
+                      <details className="citation-preview evidence-panel">
                         <summary>Exact evidence preview</summary>
                         <strong>
                           {formatStructuralLocation(
@@ -236,7 +233,7 @@ export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
                   </div>
                   {result.sourceUrl && (
                     <a href={result.sourceUrl} target="_blank" rel="noreferrer">
-                      Open source ↗
+                      {demoMode ? "Inspect source" : "Open source"} ↗
                     </a>
                   )}
                 </article>
@@ -258,6 +255,12 @@ export function WorkspaceSearch({ workspaceId }: { workspaceId: string }) {
       )}
     </section>
   );
+}
+function fileKind(mimeType: string) {
+  if (mimeType.includes("spreadsheet")) return "SHEET";
+  if (mimeType.includes("presentation")) return "SLIDE";
+  if (mimeType.includes("pdf")) return "PDF";
+  return "DOC";
 }
 function highlight(text: string, query: string) {
   const terms = query.trim().split(/\s+/).filter(Boolean);

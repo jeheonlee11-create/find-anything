@@ -8,7 +8,7 @@ import {
   users,
   workspaces,
 } from "@/db/schema";
-import type { AuthenticatedActor } from "@/lib/auth/api-authorization";
+import { isLocalDemoWorkspace, type AuthenticatedActor } from "@/lib/auth/api-authorization";
 import { recoverStaleSyncRuns } from "@/lib/google-drive/repository";
 export async function ensureUser(actor: AuthenticatedActor) {
   const db = await getDb(),
@@ -87,6 +87,7 @@ export async function workspaceDashboard(actorId: string, workspaceId: string) {
   const workspace = await actorWorkspace(actorId, workspaceId);
   if (!workspace) return null;
   const db = await getDb();
+  const demoMode = isLocalDemoWorkspace(workspaceId);
   let connector = await db
       .select({
         id: connectors.id,
@@ -100,7 +101,7 @@ export async function workspaceDashboard(actorId: string, workspaceId: string) {
       .where(
         and(
           eq(connectors.workspaceId, workspaceId),
-          eq(connectors.provider, "google_drive"),
+          eq(connectors.provider, demoMode ? "demo_fixture" : "google_drive"),
         ),
       )
       .get();
@@ -149,5 +150,5 @@ export async function workspaceDashboard(actorId: string, workspaceId: string) {
           .limit(1)
           .then((rows) => rows[0] ?? null)
       : null;
-  return { workspace, connector: connector?{...connector,scopeVerified:new Set(connector.grantedScopes.split(/\s+/)).has("https://www.googleapis.com/auth/drive.readonly" )}:null, files, latestSync };
+  return { workspace, demoMode, connector: connector?{...connector,scopeVerified:demoMode||new Set(connector.grantedScopes.split(/\s+/)).has("https://www.googleapis.com/auth/drive.readonly" )}:null, files, latestSync };
 }

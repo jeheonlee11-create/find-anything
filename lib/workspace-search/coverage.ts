@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { sourceFiles, syncRuns } from "@/db/schema";
 import { connectorForWorkspace } from "@/lib/google-drive/repository";
 import { currentAuthorizedDriveSourceIds } from "@/lib/google-drive/permission";
+import { buildCoverageSnapshot } from "./coverage-map";
 
 /**
  * Inventory coverage = processed current inventory records / authorized records discovered.
@@ -11,8 +12,14 @@ import { currentAuthorizedDriveSourceIds } from "@/lib/google-drive/permission";
  */
 export async function liveWorkspaceCoverage(workspaceId: string) {
   const connector = await connectorForWorkspace(workspaceId);
-  if (!connector || connector.status !== "connected")
-    throw new Error("GOOGLE_DRIVE_NOT_CONNECTED");
+  if (!connector) {
+    const snapshot = buildCoverageSnapshot({ authorization: "unavailable", authorizedDiscovered: 0, knownInventoryRows: 0, indexed: 0, searchable: 0, failed: 0, pending: 0, unsupported: 0, paginationComplete: false, lastSuccessfulSyncAt: null });
+    return { ...snapshot, workspaceId, snapshot };
+  }
+  if (connector.status !== "connected") {
+    const snapshot = buildCoverageSnapshot({ authorization: connector.status === "reauthorization_required" ? "reauthorization_required" : "unavailable", authorizedDiscovered: 0, knownInventoryRows: 0, indexed: 0, searchable: 0, failed: 0, pending: 0, unsupported: 0, paginationComplete: false, lastSuccessfulSyncAt: connector.lastSyncAt });
+    return { ...snapshot, workspaceId, snapshot };
+  }
   const inventory = await currentAuthorizedDriveSourceIds(connector),
     db = await getDb(),
     rows = await db
@@ -55,7 +62,21 @@ export async function liveWorkspaceCoverage(workspaceId: string) {
       pending ? `${pending} supported files are pending indexing.` : null,
       unsupported ? `${unsupported} files use formats that are not currently searchable.` : null,
     ].filter(Boolean);
+  const snapshot = buildCoverageSnapshot({
+    authorization: "authorized",
+    authorizedDiscovered: inventory.filesDiscovered,
+    knownInventoryRows: current.length,
+    indexed,
+    searchable,
+    failed,
+    pending,
+    unsupported,
+    knownRemovedOrUnauthorized: latest?.filesRemoved ?? 0,
+    paginationComplete: inventory.paginationComplete,
+    lastSuccessfulSyncAt: connector.lastSyncAt,
+  });
   return {
+    ...snapshot,
     workspaceId,
     counts: {
       authorizedDiscovered: inventory.filesDiscovered,
@@ -89,6 +110,7 @@ export async function liveWorkspaceCoverage(workspaceId: string) {
       : null,
     complete: reasons.length === 0,
     incompleteReasons: reasons,
+    snapshot,
   };
 }
 

@@ -1,0 +1,1 @@
+ALTER TABLE `retrieval_conflicts` ADD `active` integer DEFAULT true NOT NULL;

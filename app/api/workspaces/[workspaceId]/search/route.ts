@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isAuthFailure, requireApiActor } from "@/lib/auth/api-authorization";
+import { isAuthFailure, isLocalDemoWorkspace, requireApiActor } from "@/lib/auth/api-authorization";
 import { actorWorkspace } from "@/lib/workspaces/repository";
 import {
   searchWorkspaceFiles,
@@ -11,6 +11,8 @@ import { persistSearchAudit } from "@/lib/workspace-search/audit";
 import { connectorForActor } from "@/lib/google-drive/repository";
 import { currentAuthorizedDriveSourceIds } from "@/lib/google-drive/permission";
 import { rateLimit, recordBetaEvent } from "@/lib/beta/repository";
+import { calculateRetrievalConfidence } from "@/lib/workspace-search/confidence";
+import { conflictsForFiles, unresolvedConflictCount } from "@/lib/conflicts/repository";
 const fileTypes = new Set<WorkspaceFileType>([
     "all",
     "docs",
@@ -54,7 +56,7 @@ export async function POST(
         : "all",
       cursor = typeof body.cursor === "string" ? body.cursor : null,
       pageSize = typeof body.pageSize === "number" ? body.pageSize : 20,
-      connector = await connectorForActor(actor, workspaceId);
+      connector = await connectorForActor(actor, workspaceId, isLocalDemoWorkspace(workspaceId) ? "demo_fixture" : "google_drive");
     if (!connector || connector.status !== "connected")
       return NextResponse.json(
         {
@@ -65,13 +67,18 @@ export async function POST(
         },
         { status: 409 },
       );
-    const permissionInventory =
-        await currentAuthorizedDriveSourceIds(connector),
+    const permissionInventory = isLocalDemoWorkspace(workspaceId)
+        ? { sourceIds: undefined, filesDiscovered: 5, paginationComplete: true }
+        : await currentAuthorizedDriveSourceIds(connector),
       files = await indexedWorkspaceFiles(
         workspaceId,
         permissionInventory.sourceIds,
       ),
       filesLoaded = Date.now(),
+      detectedConflicts = await conflictsForFiles(workspaceId, files.map((file) => file.id)),
+      conflictsLoaded = Date.now(),
+      unresolvedFileIds = new Set(detectedConflicts.filter((item) => item.status === "unresolved").flatMap((item) => [item.leftFileId, item.rightFileId])),
+      authoritativeFileIds = new Set(detectedConflicts.filter((item) => item.status === "authoritative_source" && item.decision?.authoritativeFileId).map((item) => String(item.decision.authoritativeFileId))),
       response = searchWorkspaceFiles({
         workspaceId,
         files,
@@ -85,8 +92,22 @@ export async function POST(
           paginationComplete: permissionInventory.paginationComplete,
           lastSuccessfulSyncAt: connector.lastSyncAt,
         },
+        rankingContext: { unresolvedConflictFileIds: unresolvedFileIds, authoritativeFileIds, conflictAssessmentComplete: true },
       }),
-      matchingDone = Date.now(),
+      resultIds = new Set(response.results.map((result) => result.id));
+    response.conflicts = detectedConflicts.filter((item) => resultIds.has(item.leftFileId) || resultIds.has(item.rightFileId));
+    const conflictCount = unresolvedConflictCount(response.conflicts);
+    response.confidence = calculateRetrievalConfidence({
+      coverage: response.coverage,
+      results: response.results,
+      permissionDecisionCount: response.diagnostics.permissionDecisions.length,
+      connector: { searched: 1, expectedConfigured: 1 },
+      unresolvedConflictCount: conflictCount,
+      conflictAssessmentComplete: true,
+      retrievalMode: "literal",
+    });
+    const confidenceDone = Date.now(),
+      matchingDone = confidenceDone,
       audit = await persistSearchAudit({
         actor,
         workspaceId,
@@ -97,7 +118,9 @@ export async function POST(
           authorizationMs: authorizationDone - startedAt,
           permissionInventoryMs: filesLoaded - authorizationDone,
           loadFilesMs: filesLoaded - authorizationDone,
-          matchingMs: matchingDone - filesLoaded,
+          conflictLookupMs: conflictsLoaded - filesLoaded,
+          matchingMs: matchingDone - conflictsLoaded,
+          confidenceMs: confidenceDone - matchingDone,
         },
         correlationId: requestId,
       });

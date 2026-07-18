@@ -2,14 +2,18 @@ import { NextResponse } from "next/server";
 import { requireWorkspaceApiKey } from "@/lib/api/auth";
 const searchSchema={type:"object",required:["query"],additionalProperties:false,properties:{query:{type:"string",minLength:1,maxLength:500},fileType:{type:"string",enum:["all","docs","slides","sheets","pdf"]},cursor:{type:"string"},pageSize:{type:"integer",minimum:1,maximum:100}}};
 const idSchema=(property:string)=>({type:"object",required:[property],additionalProperties:false,properties:{[property]:{type:"string",minLength:1}}});
+const diffSchema={type:"object",required:["beforeTraceId","afterTraceId"],additionalProperties:false,properties:{beforeTraceId:{type:"string",minLength:1},afterTraceId:{type:"string",minLength:1},manual:{type:"boolean"}}};
 const definitions = [
-  {name:"search_files",description:"Rank literal matches from the authenticated workspace.",inputSchema:searchSchema},
-  {name:"find_all_files",description:"Return every literal match with cursor pagination.",inputSchema:searchSchema},
+  {name:"search_files",description:"Rank literal matches with exact evidence, stored factor-by-factor ranking explanations, and retrieval confidence.",inputSchema:searchSchema},
+  {name:"find_all_files",description:"Return every literal match in stable exhaustive order with stored ranking explanations and cursor pagination.",inputSchema:searchSchema},
   {name:"get_exact_evidence",description:"Get structural citations for one workspace file.",inputSchema:idSchema("fileId")},
   {name:"get_search_coverage",description:"Get indexing coverage for the API-key workspace.",inputSchema:{type:"object",additionalProperties:false,properties:{}}},
-  {name:"get_retrieval_trace",description:"Get one durable retrieval trace.",inputSchema:idSchema("traceId")},
-  {name:"get_search_receipt",description:"Get one durable search receipt.",inputSchema:idSchema("receiptId")},
+  {name:"get_retrieval_trace",description:"Get one authorized durable retrieval trace including versioned persisted replay events, stored ranking breakdowns, coverage, conflicts, and confidence. Older traces return replay as null.",inputSchema:idSchema("traceId")},
+  {name:"compare_retrievals",description:"Deterministically compare two authorized persisted retrieval traces without rerunning search or claiming unsupported causation. Currently unauthorized prior sources are redacted as unavailable.",inputSchema:diffSchema},
+  {name:"get_search_receipt",description:"Get one durable search receipt including its exact stored ranking breakdowns.",inputSchema:idSchema("receiptId")},
   {name:"get_file_relationships",description:"Get explainable inferred relationships for one file.",inputSchema:idSchema("fileId")},
+  {name:"get_workspace_conflicts",description:"Get deterministic conflicts with both exact citations; no winner is inferred.",inputSchema:{type:"object",additionalProperties:false,properties:{}}},
+  {name:"review_conflict",description:"Record an authoritative-source, expected-difference, resolved, or false-positive decision.",inputSchema:{type:"object",required:["conflictId","status"],additionalProperties:false,properties:{conflictId:{type:"string",minLength:1},status:{type:"string",enum:["authoritative_source","expected_difference","resolved","false_positive"]},authoritativeFileId:{type:"string"},note:{type:"string",maxLength:500}}}},
 ];
 export async function POST(request: Request) {
   const principal = await requireWorkspaceApiKey(request);
@@ -119,6 +123,12 @@ function toolTarget(
       ),
       method: "GET",
     };
+  if (name === "compare_retrievals")
+    return {
+      url: url("/v1/retrieval-diffs"),
+      method: "POST",
+      body: { ...args, workspaceId },
+    };
   if (name === "get_file_relationships")
     return {
       url: url(
@@ -126,6 +136,8 @@ function toolTarget(
       ),
       method: "GET",
     };
+  if (name === "get_workspace_conflicts") return { url: url(`/v1/workspaces/${encodeURIComponent(workspaceId)}/conflicts`), method: "GET" };
+  if (name === "review_conflict") return { url: url(`/v1/workspaces/${encodeURIComponent(workspaceId)}/conflicts`), method: "PATCH", body: args };
   return null;
 }
 function json(

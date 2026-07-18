@@ -1,0 +1,12 @@
+import { DatabaseSync } from "node:sqlite";
+import { comparePersistedRetrievals } from "../lib/retrieval-diff/core.ts";
+const path = process.argv[2];
+if (!path) throw new Error("Local D1 path is required.");
+const db = new DatabaseSync(path, { readOnly: true });
+const rows = db.prepare("SELECT id, workspace_id, normalized_query, mode, filters_json, results_json, ranking_snapshot_json, coverage_json, conflict_snapshot_json, confidence_json, trace_event_schema_version, trace_events_json FROM retrieval_traces WHERE results_json IS NOT NULL ORDER BY created_at DESC").all();
+const pair = rows.flatMap((row, index) => rows.slice(index + 1).filter((candidate) => candidate.workspace_id === row.workspace_id).slice(0, 1).map((candidate) => [candidate, row])).at(0);
+if (!pair) throw new Error("Two local traces in one workspace are required.");
+const toTrace = (row) => ({ traceId: row.id, normalizedQuery: row.normalized_query, searchMode: row.mode, filters: JSON.parse(row.filters_json), results: JSON.parse(row.results_json), rankingExplanations: row.ranking_snapshot_json ? JSON.parse(row.ranking_snapshot_json) : null, coverage: JSON.parse(row.coverage_json), conflicts: row.conflict_snapshot_json ? JSON.parse(row.conflict_snapshot_json) : [], retrievalConfidence: row.confidence_json ? JSON.parse(row.confidence_json) : null, replay: row.trace_events_json ? { schemaVersion: row.trace_event_schema_version, events: JSON.parse(row.trace_events_json) } : null });
+const authorized = new Set(db.prepare("SELECT id FROM source_files WHERE workspace_id = ? AND trashed = 0 AND index_status = 'indexed'").all(pair[0].workspace_id).map((row) => String(row.id)));
+const diff = comparePersistedRetrievals({ before: toTrace(pair[0]), after: toTrace(pair[1]), currentlyAuthorizedFileIds: authorized, manual: true });
+console.log(JSON.stringify({ version: diff.version, comparability: diff.comparability.category, changes: diff.summary.totalChanges, unavailableSources: diff.summary.unavailableSources, deterministic: JSON.stringify(diff) === JSON.stringify(comparePersistedRetrievals({ before: toTrace(pair[0]), after: toTrace(pair[1]), currentlyAuthorizedFileIds: authorized, manual: true })), authorizedFileCount: authorized.size }, null, 2));

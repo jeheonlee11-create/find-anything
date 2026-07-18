@@ -85,6 +85,33 @@ export async function relationshipsForFile(
       disclosure: "Inferred relationship; not a verified fact.",
     }));
 }
+export async function unresolvedConflictCountForFiles(
+  workspaceId: string,
+  fileIds: string[],
+) {
+  if (fileIds.length < 2) return 0;
+  const ids = new Set(fileIds),
+    db = await getDb(),
+    rows = await db
+      .select({
+        fromFileId: fileRelationships.fromFileId,
+        toFileId: fileRelationships.toFileId,
+        userStatus: fileRelationships.userStatus,
+      })
+      .from(fileRelationships)
+      .where(
+        and(
+          eq(fileRelationships.workspaceId, workspaceId),
+          eq(fileRelationships.relationshipType, "conflicting_numeric_values"),
+        ),
+      );
+  return rows.filter(
+    (row) =>
+      row.userStatus !== "rejected" &&
+      ids.has(row.fromFileId) &&
+      ids.has(row.toFileId),
+  ).length;
+}
 export async function correctRelationship(
   workspaceId: string,
   id: string,

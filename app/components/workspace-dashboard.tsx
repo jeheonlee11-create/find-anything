@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { WorkspaceSearch } from "@/app/components/workspace-search";
+import { WorkspaceCoverageMap } from "@/app/components/workspace-coverage-map";
 type Dashboard = {
+  demoMode: boolean;
   workspace: { id: string; name: string; role: string };
   connector: null | {
     id: string;
@@ -187,7 +189,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
               Workspace · {data.workspace.role}
             </span>
             <h2>{data.workspace.name}</h2>
-            <code>{data.workspace.id}</code>
+            {!data.demoMode && <code>{data.workspace.id}</code>}
           </div>
           <button onClick={() => router.push("/app")}>All workspaces</button>
         </div>
@@ -197,6 +199,25 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
           </p>
         )}
       </section>
+      {data.demoMode ? (
+        <>
+          <section className="content-section demo-overview">
+            <div className="demo-status-row">
+              <div><span className="page-badge">Decision demo · Synthetic</span><h2>What agents found—and what they missed</h2><p>Four authorized pricing and launch sources are searchable. One finance source is intentionally inaccessible, and the connector snapshot is stale.</p></div>
+              <div className="demo-metrics"><b>4 / 5</b><span>accessible</span><b>1</b><span>unavailable</span></div>
+            </div>
+            <div className="demo-flow" aria-label="Retrieval flow"><span>Evidence</span><i>→</i><span>Confidence</span><i>→</i><span>Coverage</span><i>→</i><span>Conflict</span><i>→</i><span>Replay</span></div>
+          </section>
+          <WorkspaceSearch workspaceId={workspaceId} demoMode />
+          <section className="content-section developer-proof">
+            <span className="page-badge">Built for agents</span>
+            <h2>Same retrieval, structured interfaces.</h2>
+            <p>The UI, REST endpoint, and MCP tools share one authorization and evidence pipeline.</p>
+              <div className="developer-grid"><article><b>REST API</b><code>POST /v1/search</code><small>Stable JSON · cursor pagination · trace ID</small></article><article><b>MCP · POST /api/mcp</b><code>tools/list · tools/call</code><small>Search and inspect evidence from an agent</small></article><article><b>Trust layer</b><code>trace + receipt</code><small>Coverage, ranking factors, citations, latency</small></article></div>
+            <div className="audit-actions"><a href="/docs">Open API documentation</a><a href="/mcp">Open MCP endpoint</a></div>
+          </section>
+        </>
+      ) : <>
       <section className="content-section">
         <h2>2 · Connect Google Drive</h2>
         {data.connector ? (
@@ -245,6 +266,10 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
             </button>
           </div>
         )}
+      </section>
+      <section className="content-section">
+        <h2>Coverage map</h2>
+        <WorkspaceCoverageMap workspaceId={workspaceId} />
       </section>
       <section className="content-section">
         <h2>3 · Indexing status</h2>
@@ -329,6 +354,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
         )}
       </section>
       <WorkspaceSearch workspaceId={workspaceId} />
+      </>}
     </>
   );
 }
