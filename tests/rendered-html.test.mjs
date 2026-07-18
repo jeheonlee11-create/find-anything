@@ -290,6 +290,13 @@ test("analytics requires authentication and uses privacy-safe first-party persis
   assert.doesNotMatch(source, /POSTHOG|capture\//i);
 });
 
+test("client analytics only sends from the configured application origin", async () => {
+  const source = await readFile(new URL("../lib/analytics/client.ts", import.meta.url), "utf8");
+  assert.match(source, /NEXT_PUBLIC_APP_URL/);
+  assert.match(source, /window\.location\.origin!==configuredOrigin/);
+  assert.match(source, /if\(configuredOrigin&&window\.location\.origin!==configuredOrigin\)return/);
+});
+
 test("founder metrics fail closed when admin authorization is absent", async () => {
   const response = await request("/api/internal/metrics");
   assert.equal(response.status, 404);
