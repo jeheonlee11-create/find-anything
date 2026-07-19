@@ -1,4 +1,5 @@
-export const DEMO_WORKSPACE_ID = "ws_yc_demo_acme";
+export * from "../lib/demo/acme-fixture.ts";
+/*
 export const DEMO_CONNECTOR_ID = "connector_yc_demo_acme";
 export const DEMO_WORKSPACE_NAME = "Acme AI · Company Knowledge";
 export const DEMO_AUTHORIZED_DISCOVERED = 7;
@@ -79,3 +80,4 @@ export const inaccessibleFinanceFile = {
 function file(id, name, mime, unitType, location, content, modifiedAt) {
   return { id: `demo_file_${id}`, sourceId: `synthetic_${id}`, name, mime, unitType, location, content, modifiedAt };
 }
+*/

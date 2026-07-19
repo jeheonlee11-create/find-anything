@@ -8,7 +8,7 @@ import {
   users,
   workspaces,
 } from "@/db/schema";
-import { isLocalDemoWorkspace, type AuthenticatedActor } from "@/lib/auth/api-authorization";
+import { isDemoWorkspace, type AuthenticatedActor } from "@/lib/auth/api-authorization";
 import { recoverStaleSyncRuns } from "@/lib/google-drive/repository";
 export async function ensureUser(actor: AuthenticatedActor) {
   const db = await getDb(),
@@ -87,7 +87,7 @@ export async function workspaceDashboard(actorId: string, workspaceId: string) {
   const workspace = await actorWorkspace(actorId, workspaceId);
   if (!workspace) return null;
   const db = await getDb();
-  const demoMode = isLocalDemoWorkspace(workspaceId);
+  const demoMode = isDemoWorkspace(workspaceId);
   let connector = await db
       .select({
         id: connectors.id,

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isAuthFailure, isLocalDemoWorkspace, requireApiActor } from "@/lib/auth/api-authorization";
+import { isAuthFailure, isDemoWorkspace, requireApiActor } from "@/lib/auth/api-authorization";
 import { actorWorkspace } from "@/lib/workspaces/repository";
 import {
   searchWorkspaceFiles,
@@ -56,7 +56,7 @@ export async function POST(
         : "all",
       cursor = typeof body.cursor === "string" ? body.cursor : null,
       pageSize = typeof body.pageSize === "number" ? body.pageSize : 20,
-      connector = await connectorForActor(actor, workspaceId, isLocalDemoWorkspace(workspaceId) ? "demo_fixture" : "google_drive");
+      connector = await connectorForActor(actor, workspaceId, isDemoWorkspace(workspaceId) ? "demo_fixture" : "google_drive");
     if (!connector || connector.status !== "connected")
       return NextResponse.json(
         {
@@ -67,10 +67,10 @@ export async function POST(
         },
         { status: 409 },
       );
-    const demoSync = isLocalDemoWorkspace(workspaceId)
+    const demoSync = isDemoWorkspace(workspaceId)
         ? await latestSyncForConnector(connector.id)
         : null,
-      permissionInventory = isLocalDemoWorkspace(workspaceId)
+      permissionInventory = isDemoWorkspace(workspaceId)
         ? { sourceIds: undefined, filesDiscovered: demoSync?.filesDiscovered ?? 0, paginationComplete: demoSync?.paginationComplete ?? false }
         : await currentAuthorizedDriveSourceIds(connector),
       files = await indexedWorkspaceFiles(

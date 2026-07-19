@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 
-const fixture = await readFile(new URL("../scripts/demo-fixture.mjs", import.meta.url), "utf8");
+const fixture = await readFile(new URL("../lib/demo/acme-fixture.ts", import.meta.url), "utf8");
 const seed = await readFile(new URL("../scripts/demo-seed.mjs", import.meta.url), "utf8");
 const dashboard = await readFile(new URL("../app/components/workspace-dashboard.tsx", import.meta.url), "utf8");
 const search = await readFile(new URL("../app/components/workspace-search.tsx", import.meta.url), "utf8");
 const conflicts = await readFile(new URL("../app/components/search-conflicts.tsx", import.meta.url), "utf8");
+const productionSeed = await readFile(new URL("../lib/demo/production-seed.ts", import.meta.url), "utf8");
+const productionRoute = await readFile(new URL("../app/api/internal/acme-demo/route.ts", import.meta.url), "utf8");
 
 test("investor fixture is deterministic, synthetic, and representative", () => {
   assert.match(fixture, /ws_yc_demo_acme/);
@@ -51,4 +53,15 @@ test("the focused demo supports pricing and launch questions", () => {
   assert.match(search, /What is our current enterprise pricing and launch date/);
   const corePromise = readFile(new URL("../lib/workspace-search/core.ts", import.meta.url), "utf8");
   return corePromise.then((core) => assert.match(core, /QUERY_STOP_WORDS/));
+});
+
+test("production demo seed is admin-only, target-confirmed, credential-free, and non-destructive", () => {
+  assert.match(productionRoute, /requireBetaAdmin/);
+  assert.match(productionRoute, /confirmWorkspaceId/);
+  assert.match(productionSeed, /confirmedWorkspaceId !== DEMO_WORKSPACE_ID/);
+  assert.match(productionSeed, /DEMO_WORKSPACE_OWNER_MISMATCH/);
+  assert.doesNotMatch(productionSeed, /delete\(|DELETE FROM|randomBytes|apiKey|clientSecret/);
+  assert.match(productionSeed, /accessTokenCiphertext:\s*"demo-fixture-no-token"/);
+  assert.match(productionSeed, /indexed !== 7 \|\| inaccessible !== 1/);
+  assert.match(productionSeed, /SOURCE_NO_LONGER_AUTHORIZED/);
 });

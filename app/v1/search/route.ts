@@ -9,7 +9,7 @@ import {
 import { persistSearchAudit } from "@/lib/workspace-search/audit";
 import { connectorForWorkspace } from "@/lib/google-drive/repository";
 import { currentAuthorizedDriveSourceIds } from "@/lib/google-drive/permission";
-import { isLocalDemoWorkspace } from "@/lib/auth/api-authorization";
+import { isDemoWorkspace } from "@/lib/auth/api-authorization";
 import { calculateRetrievalConfidence } from "@/lib/workspace-search/confidence";
 import { conflictsForFiles, unresolvedConflictCount } from "@/lib/conflicts/repository";
 export async function POST(request: Request) {
@@ -57,7 +57,7 @@ export async function POST(request: Request) {
       },
       { status: 400 },
     );
-  const connector = await connectorForWorkspace(principal.workspaceId, isLocalDemoWorkspace(principal.workspaceId) ? "demo_fixture" : "google_drive");
+  const connector = await connectorForWorkspace(principal.workspaceId, isDemoWorkspace(principal.workspaceId) ? "demo_fixture" : "google_drive");
   if (!connector || connector.status !== "connected")
     return NextResponse.json(
       {
@@ -70,7 +70,7 @@ export async function POST(request: Request) {
     );
   let permissionInventory;
   try {
-    permissionInventory = isLocalDemoWorkspace(principal.workspaceId)
+    permissionInventory = isDemoWorkspace(principal.workspaceId)
       ? { sourceIds: undefined, filesDiscovered: 5, paginationComplete: true }
       : await currentAuthorizedDriveSourceIds(connector);
   } catch {
