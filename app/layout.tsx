@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
+import "./marketing.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -15,8 +16,8 @@ export async function generateMetadata(): Promise<Metadata> {
   if (process.env.NEXT_PUBLIC_SITE_URL) {
     try { origin = new URL(process.env.NEXT_PUBLIC_SITE_URL).origin; } catch { origin = requestOrigin; }
   }
-  const title = "Find Anything — Exact, permission-aware Drive search";
-  const description = "Connect every workspace once. Give any agent permission-aware, coverage-accounted, and verifiable access to private files.";
+  const title = "Find Anything — Trusted knowledge for AI agents";
+  const description = "Detect conflicting knowledge, account for retrieval gaps, and give AI agents exact citations, permissions, confidence, trace, replay, receipt, and diff.";
 
   return {
     metadataBase: new URL(origin),
@@ -28,9 +29,9 @@ export async function generateMetadata(): Promise<Metadata> {
       title,
       description,
       type: "website",
-      images: [{ url: `${origin}/og-control-plane.png`, width: 1662, height: 946, alt: "Find Anything — exact, permission-aware Drive search" }],
+      images: [{ url: `${origin}/find-anything-demo-poster.png`, width: 1920, height: 1080, alt: "Find Anything accounts for known sources, retrieval confidence, citations, and coverage" }],
     },
-    twitter: { card: "summary_large_image", title, description, images: [`${origin}/og-control-plane.png`] },
+    twitter: { card: "summary_large_image", title, description, images: [`${origin}/find-anything-demo-poster.png`] },
   };
 }
 

@@ -439,6 +439,31 @@ export const betaUsers = sqliteTable(
     statusIdx: index("beta_users_status_idx").on(t.status),
   }),
 );
+export const betaAccessRequests = sqliteTable(
+  "beta_access_requests",
+  {
+    id: text("id").primaryKey(),
+    emailHash: text("email_hash").notNull(),
+    emailCiphertext: text("email_ciphertext").notNull(),
+    fullName: text("full_name").notNull(),
+    company: text("company").notNull(),
+    jobTitle: text("job_title").notNull(),
+    companySize: text("company_size").notNull(),
+    knowledgeToolsJson: text("knowledge_tools_json").notNull(),
+    usesAiAgents: integer("uses_ai_agents", { mode: "boolean" }).notNull(),
+    knowledgeProblem: text("knowledge_problem").notNull(),
+    willingLimitedFolder: integer("willing_limited_folder", { mode: "boolean" }).notNull(),
+    intent: text("intent", { enum: ["beta", "demo"] }).notNull(),
+    status: text("status", { enum: ["new", "reviewing", "approved", "declined"] }).notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => ({
+    emailIdx: uniqueIndex("beta_access_requests_email_idx").on(t.emailHash),
+    statusIdx: index("beta_access_requests_status_idx").on(t.status),
+    createdIdx: index("beta_access_requests_created_idx").on(t.createdAt),
+  }),
+);
 export const betaFeedback = sqliteTable(
   "beta_feedback",
   {

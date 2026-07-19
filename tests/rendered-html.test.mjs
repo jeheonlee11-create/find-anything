@@ -30,15 +30,15 @@ async function search(query, extra = {}) {
 
 test("renders public product, growth, help, and trust routes with truthful disclosures", async () => {
   for (const [path, pattern] of [
-    ["/", /Interactive prototype/i],
+    ["/", /Your AI agents don.t know what they missed/i],
     ["/docs", /Retrieval API contract/i],
-    ["/trust", /Trust starts with accurate claims/i],
+    ["/trust", /Trust starts with an honest retrieval boundary/i],
     ["/pricing", /Pre-beta/i],
-    ["/privacy", /Legal review required/i],
+    ["/privacy", /Collect less/i],
     ["/terms", /Legal review required/i],
     ["/support", /production support inbox has not been configured/i],
     ["/status", /Demo retrieval is operational/i],
-    ["/beta", /Waitlist not yet connected/i],
+    ["/beta", /Controlled beta · Design partners/i],
     ["/mcp", /Implemented locally/i],
     ["/google-drive", /Google Drive · Private beta/i],
     ["/use-cases", /Concrete workflows/i],
@@ -300,6 +300,53 @@ test("client analytics only sends from the configured application origin", async
 test("founder metrics fail closed when admin authorization is absent", async () => {
   const response = await request("/api/internal/metrics");
   assert.equal(response.status, 404);
+});
+
+test("public beta requests reject malformed input and silently absorb bot traps", async () => {
+  const malformed = await request("/api/beta/waitlist", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ fullName: "A", startedAt: Date.now() - 5_000 }),
+  });
+  assert.equal(malformed.status, 400);
+  assert.equal((await malformed.json()).error.code, "INVALID_REQUEST");
+
+  const trapped = await request("/api/beta/waitlist", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ website: "https://spam.invalid", startedAt: Date.now() - 5_000 }),
+  });
+  assert.equal(trapped.status, 202);
+  assert.equal((await trapped.json()).submitted, true);
+});
+
+test("public marketing events use a strict privacy-safe allowlist", async () => {
+  const invalid = await request("/api/marketing/events", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ event: "private_document_opened", anonymousId: "test" }),
+  });
+  assert.equal(invalid.status, 400);
+  const source = await readFile(new URL("../app/api/marketing/events/route.ts", import.meta.url), "utf8");
+  assert.match(source, /demo_viewed.*beta_access_clicked.*demo_booking_clicked/);
+  assert.match(source, /rateLimit\(actorId, "marketing_event", 30, 3600\)/);
+  assert.doesNotMatch(source, /query|filename|documentContent|accessToken/i);
+});
+
+test("access requests encrypt email, deduplicate, and remain admin-only", async () => {
+  const [repository, schema, admin] = await Promise.all([
+    readFile(new URL("../lib/beta/repository.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/admin/beta/page.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(repository, /encryptSecret\(input\.email/);
+  assert.match(repository, /emailHash\(input\.email\)/);
+  assert.match(repository, /betaAccessRequests\.emailHash/);
+  assert.match(schema, /beta_access_requests/);
+  assert.match(admin, /requireBetaChatGPTUser/);
+  assert.match(admin, /access\.role!=="admin"/);
+  const unauthorized = await request("/admin/beta");
+  assert.notEqual(unauthorized.status, 200);
 });
 
 test("public URLs are environment configurable and contain no personal-name branding", async () => {

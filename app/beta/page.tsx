@@ -1,1 +1,30 @@
-import {PublicPage} from "@/app/components/public-page";export default function Beta(){return <PublicPage badge="Controlled beta · Waitlist not yet connected" title="Help prove retrieval quality." lede="We are preparing a limited design-partner beta for developers building agents over private files."><section className="content-section"><h2>What beta participants evaluate</h2><ul className="status-list"><li>Time to first useful evidence</li><li>Find All completeness and missing-file reasons</li><li>Citation correctness and permission behavior</li><li>API/MCP fit and willingness to pay</li></ul><p className="disclosure">Invitation email, approvals, referral credits, persistence, and beta terms are specified but not operational. Contact the founder through the existing channel until support email is configured.</p></section></PublicPage>}
+import Link from "next/link";
+import {PublicPage} from "@/app/components/public-page";
+
+export default function Beta() {
+  return (
+    <PublicPage
+      badge="Controlled beta · Design partners"
+      title="Help make private knowledge trustworthy for AI agents."
+      lede="Find Anything is inviting a small group of teams that need permission-aware retrieval, exact citations, and a clear account of what their agents could not access."
+    >
+      <section className="content-section">
+        <h2>What design partners evaluate</h2>
+        <ul className="status-list">
+          <li>Whether exact evidence and conflicts improve trust</li>
+          <li>Whether coverage makes missing knowledge visible</li>
+          <li>Whether traces, receipts, and replay help debug agents</li>
+          <li>Whether the API and MCP interface fit real workflows</li>
+        </ul>
+        <p className="disclosure">
+          Access is individually reviewed. Google Drive is the only available
+          connector today; additional connectors shown on the marketing page
+          are planned, not live.
+        </p>
+        <Link className="button-link" href="/#request-access">
+          Request beta access
+        </Link>
+      </section>
+    </PublicPage>
+  );
+}

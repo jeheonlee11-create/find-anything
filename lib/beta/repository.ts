@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import {
   betaAnalytics,
   betaAccessAudit,
+  betaAccessRequests,
   betaFeedback,
   betaInvitations,
   betaUsers,
@@ -13,6 +14,7 @@ import {
   operationRateLimits,
 } from "@/db/schema";
 import type { AuthenticatedActor } from "@/lib/auth/api-authorization";
+import { decryptSecret, encryptSecret } from "@/lib/google-drive/crypto";
 
 async function digest(value: string) {
   const bytes = new Uint8Array(
@@ -110,6 +112,41 @@ export async function inviteBetaUser(email: string, adminId: string) {
     });
   await db.insert(betaAccessAudit).values({ id: `audit_${crypto.randomUUID()}`, adminActorId: adminId, targetActorId: null, invitationId: row.id, action: "invitation_approved", createdAt: now });
   return { id: row.id, status: row.status, expiresAt: row.expiresAt };
+}
+export async function saveBetaAccessRequest(input: {
+  email: string;
+  fullName: string;
+  company: string;
+  jobTitle: string;
+  companySize: string;
+  knowledgeTools: string[];
+  usesAiAgents: boolean;
+  knowledgeProblem: string;
+  willingLimitedFolder: boolean;
+  intent: "beta" | "demo";
+}) {
+  const db = await getDb(), now = new Date().toISOString(), hash = await emailHash(input.email);
+  const existing = await db.select({ id: betaAccessRequests.id }).from(betaAccessRequests).where(eq(betaAccessRequests.emailHash, hash)).get();
+  const values = {
+    emailCiphertext: await encryptSecret(input.email.trim().toLowerCase()),
+    fullName: input.fullName.trim(),
+    company: input.company.trim(),
+    jobTitle: input.jobTitle.trim(),
+    companySize: input.companySize,
+    knowledgeToolsJson: JSON.stringify(input.knowledgeTools),
+    usesAiAgents: input.usesAiAgents,
+    knowledgeProblem: input.knowledgeProblem.trim(),
+    willingLimitedFolder: input.willingLimitedFolder,
+    intent: input.intent,
+    updatedAt: now,
+  };
+  if (existing) {
+    await db.update(betaAccessRequests).set(values).where(eq(betaAccessRequests.id, existing.id));
+    return { id: existing.id, created: false };
+  }
+  const id = `access_${crypto.randomUUID()}`;
+  await db.insert(betaAccessRequests).values({ id, emailHash: hash, ...values, status: "new", createdAt: now });
+  return { id, created: true };
 }
 export async function setBetaUserStatus(
   actorId: string,
@@ -232,7 +269,7 @@ export async function rateLimit(
 }
 export async function betaAdminData() {
   const db = await getDb();
-  const [users, feedback, events, audit, connectorRows, jobs, failures, coverage] = await Promise.all([
+  const [users, accessRequests, feedback, events, audit, connectorRows, jobs, failures, coverage] = await Promise.all([
     db
       .select({
         actorId: betaUsers.actorId,
@@ -244,6 +281,7 @@ export async function betaAdminData() {
       .from(betaUsers)
       .orderBy(desc(betaUsers.activatedAt))
       .limit(100),
+    db.select().from(betaAccessRequests).orderBy(desc(betaAccessRequests.createdAt)).limit(100),
     db
       .select()
       .from(betaFeedback)
@@ -268,6 +306,21 @@ export async function betaAdminData() {
     indexingDurations = finishedJobs.map((job) => Date.parse(job.completedAt!) - Date.parse(job.startedAt!)).filter((value) => Number.isFinite(value) && value >= 0);
   return {
     users,
+    accessRequests: await Promise.all(accessRequests.map(async (row) => ({
+      id: row.id,
+      email: await decryptSecret(row.emailCiphertext).catch(() => "Unavailable"),
+      fullName: row.fullName,
+      company: row.company,
+      jobTitle: row.jobTitle,
+      companySize: row.companySize,
+      knowledgeTools: JSON.parse(row.knowledgeToolsJson) as string[],
+      usesAiAgents: row.usesAiAgents,
+      knowledgeProblem: row.knowledgeProblem,
+      willingLimitedFolder: row.willingLimitedFolder,
+      intent: row.intent,
+      status: row.status,
+      createdAt: row.createdAt,
+    }))),
     feedback: feedback.map((row) => ({
       ...row,
       query: undefined,

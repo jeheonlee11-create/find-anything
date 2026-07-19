@@ -1,290 +1,124 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { runSampleRetrieval } from "@/lib/retrieval/core";
-import type { RetrievalFilters, RetrievalResponse, SearchMode } from "@/lib/retrieval/types";
-import { publicUrls } from "@/lib/config/urls";
-import { trackEvent } from "@/lib/analytics/client";
+import { FormEvent, useRef, useState } from "react";
 
-const initialQuery = "Find the document where I discussed air pollution and Detroit.";
-const sourceNames = [{name:"Google Drive",status:"Sample corpus"},{name:"Microsoft 365",status:"Planned"},{name:"Notion",status:"Planned"},{name:"Dropbox",status:"Planned"}];
-function mapMode(mode:"ranked"|"exhaustive"|"exact"|"newest"):SearchMode{return mode==="exhaustive"?"find_all":mode==="exact"?"exact_evidence":mode==="newest"?"newest_version":"ranked";}
+const tools = ["Google Drive", "Slack", "Notion", "Microsoft 365", "GitHub", "Jira", "Other"];
+type Intent = "beta" | "demo";
+
+function marketingEvent(event: "demo_viewed" | "beta_access_clicked" | "demo_booking_clicked", intent?: Intent) {
+  try {
+    const key = "find-anything-marketing-id";
+    let anonymousId = sessionStorage.getItem(key);
+    if (!anonymousId) { anonymousId = crypto.randomUUID(); sessionStorage.setItem(key, anonymousId); }
+    void fetch("/api/marketing/events", { method: "POST", headers: { "content-type": "application/json" }, keepalive: true, body: JSON.stringify({ event, anonymousId, intent }) });
+  } catch { /* Analytics never blocks the public experience. */ }
+}
 
 export default function Home() {
-  const [query, setQuery] = useState(initialQuery);
-  const [submitted, setSubmitted] = useState(query);
-  const [searching, setSearching] = useState(false);
-  const [codeTab, setCodeTab] = useState<"mcp" | "typescript" | "curl">("mcp");
-  const [copied, setCopied] = useState(false);
-  const [searchMode, setSearchMode] = useState<"ranked" | "exhaustive" | "exact" | "newest">("ranked");
-  const [activeLayer, setActiveLayer] = useState<"results"|"coverage"|"trace">("results");
-  const [response, setResponse] = useState<RetrievalResponse>(()=>runSampleRetrieval({query:initialQuery,mode:"ranked"}));
-  const [filters, setFilters] = useState<RetrievalFilters>({});
-  useEffect(()=>{trackEvent("landing_page_viewed",{origin:"ui",plan:"demo",onboardingStage:"landing"})},[]);
+  const [intent, setIntent] = useState<Intent>("beta");
+  const [startedAt, setStartedAt] = useState(() => Date.now());
+  const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  const [message, setMessage] = useState("");
+  const viewed = useRef(false);
 
-  const code = useMemo(() => {
-    if (codeTab === "mcp") {
-      return `{
-  "mcpServers": {
-    "find-anything": {
-      "url": "${publicUrls.mcp}",
-      "headers": { "Authorization": "Bearer fa_live_your_key_here" }
-    }
+  function chooseIntent(next: Intent) {
+    setIntent(next);
+    marketingEvent(next === "demo" ? "demo_booking_clicked" : "beta_access_clicked", next);
+    document.getElementById("request-access")?.scrollIntoView({ behavior: "smooth" });
   }
-}`;
-    }
-    if (codeTab === "typescript") {
-      return `import { FindAnything } from "@findanything/sdk";
-
-const files = await find.search({
-  query: "${submitted}",
-  sources: ["google-drive"],
-  search_mode: "exhaustive",
-  completeness_policy: "fail_if_incomplete",
-  include_coverage: true,
-  include_exclusions: true
-});`;
-    }
-    return `curl ${publicUrls.api}/api/retrieval/search \\
-  -H "Authorization: Bearer fa_live_your_key_here" \\
-  -H "Content-Type: application/json" \\
-  -d '{"query":"${submitted}","search_mode":"exhaustive","include_coverage":true}'`;
-  }, [codeTab, submitted]);
-
-  function runSearch(event: FormEvent) {
-    event.preventDefault();
-    const clean = query.trim();
-    if (!clean) return;
-    setSearching(true);
-    trackEvent("first_search_started",{workspaceId:"ws_synthetic_demo",plan:"demo",searchMode:searchMode,origin:"ui",fileCountBucket:"100-499"});
-    window.setTimeout(() => {
-      setSubmitted(clean);
-      setResponse(runSampleRetrieval({query:clean,mode:mapMode(searchMode),filters,page:1,pageSize:20}));
-      trackEvent(searchMode==="exhaustive"?"find_all_used":searchMode==="exact"?"exact_evidence_used":searchMode==="newest"?"newest_version_used":"best_matches_used",{workspaceId:"ws_synthetic_demo",plan:"demo",searchMode,origin:"ui",resultCountBucket:"20+"});
-      trackEvent("first_search_completed",{workspaceId:"ws_synthetic_demo",plan:"demo",searchMode,origin:"ui",latencyBucket:"under_1s",completenessStatus:"incomplete"});
-      setActiveLayer("results");
-      setSearching(false);
-    }, 420);
-  }
-
-  async function copyKey() {
-    await navigator.clipboard?.writeText("fa_live_your_key_here");
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  }
-
-  function exportReceipt() {
-    trackEvent("receipt_exported",{workspaceId:"ws_synthetic_demo",plan:"demo",searchMode,origin:"ui",completenessStatus:response.coverage.completenessStatus});
-    const receipt = {
-      ...response.receipt,
-      notice: "Generated from the repository sample corpus. This record is exportable but is not persisted or immutable.",
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setStatus("submitting"); setMessage("");
+    const form = new FormData(event.currentTarget);
+    const payload = {
+      fullName: form.get("fullName"), email: form.get("email"), company: form.get("company"), jobTitle: form.get("jobTitle"), companySize: form.get("companySize"),
+      knowledgeTools: form.getAll("knowledgeTools"), usesAiAgents: form.get("usesAiAgents") === "yes", knowledgeProblem: form.get("knowledgeProblem"), willingLimitedFolder: form.get("willingLimitedFolder") === "yes",
+      website: form.get("website"), intent, startedAt,
     };
-    const href = URL.createObjectURL(new Blob([JSON.stringify(receipt, null, 2)], { type: "application/json" }));
-    const anchor = document.createElement("a");
-    anchor.href = href;
-    anchor.download = "find-anything-sample-search-receipt.json";
-    anchor.click();
-    URL.revokeObjectURL(href);
+    const response = await fetch("/api/beta/waitlist", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+    const result = await response.json().catch(() => ({})) as { message?: string; error?: { message?: string } };
+    if (response.ok) { setStatus("success"); setMessage(result.message ?? "Your request was received."); event.currentTarget.reset(); }
+    else { setStatus("error"); setMessage(result.error?.message ?? "We couldn’t save your request. Please try again."); }
   }
 
-  function changePage(page:number){trackEvent("pagination_used",{workspaceId:"ws_synthetic_demo",plan:"demo",searchMode,origin:"ui"});setResponse(runSampleRetrieval({query:submitted,mode:mapMode(searchMode),filters,page,pageSize:20}));}
+  return <main className="marketing-page">
+    <nav className="marketing-nav marketing-shell" aria-label="Main navigation">
+      <a className="marketing-brand" href="#top" aria-label="Find Anything home"><span>F</span>Find Anything</a>
+      <div><a href="#product">Product</a><a href="#design-partners">Design partners</a><a href="/trust">Security</a></div>
+      <button onClick={() => chooseIntent("beta")}>Request Beta Access</button>
+    </nav>
 
-  return (
-    <main>
-      <nav className="nav shell" aria-label="Main navigation">
-        <a className="brand" href="#top" aria-label="Find Anything home">
-          <span className="brand-mark">F</span>
-          <span>Find Anything</span>
-        </a>
-        <div className="nav-links">
-          <a href="#how">How it works</a>
-          <a href="#playground">Playground</a>
-          <a href="/docs">API docs</a>
-          <a href="/pricing">Pricing</a>
-          <a href="/trust">Trust</a>
-        </div>
-        <a className="button button-small" href="/app">
-          Sign in <span>↗</span>
-        </a>
-      </nav>
+    <section className="marketing-hero marketing-shell" id="top">
+      <div className="marketing-eyebrow">Retrieval evidence for AI agents</div>
+      <h1>Your AI agents don’t know what they missed.</h1>
+      <p>Find Anything detects conflicting and outdated knowledge, accounts for inaccessible or excluded sources, and shows exactly why an agent trusted one answer over another.</p>
+      <div className="marketing-actions"><button className="marketing-primary" onClick={() => chooseIntent("beta")}>Request Beta Access <span>→</span></button><a href="#demo">Watch the 56-second demo <span>↓</span></a></div>
+      <p className="marketing-boundary">Controlled design-partner beta · Google Drive available now · Additional connectors planned</p>
+      <div className="marketing-proofline" aria-label="Product proof sequence"><span>Conflict detected</span><i>→</i><span>Permissions enforced</span><i>→</i><span>Evidence accounted</span></div>
+    </section>
 
-      <section className="hero shell" id="top">
-        <div className="hero-copy">
-          <div className="eyebrow"><span className="pulse" /> Retrieval infrastructure for AI agents</div>
-          <h1>The retrieval control plane for AI agents.</h1>
-          <p className="hero-lede">
-            Connect Google Drive once. Let any AI agent search your organization’s files with exact citations, permission checks, and proof of what was not searched.
-          </p>
-          <div className="hero-actions">
-            <a className="button" href="/app">Create a workspace <span>→</span></a>
-            <a className="text-link" href="/docs">Read the API docs <span>↗</span></a>
-          </div>
-          <p className="microcopy">Prove what was searched · Report what was missed · Cite exact evidence</p>
-        </div>
-
-        <div className="agent-window" aria-label="Interactive prototype search result demonstration">
-          <div className="window-bar">
-            <div className="window-dots"><i /><i /><i /></div>
-            <span>Interactive prototype · sample corpus</span>
-            <span className="status"><i /> sample</span>
-          </div>
-          <div className="conversation">
-            <div className="message user-message">
-              <span className="avatar human">J</span>
-              <p>Find the document where I discussed air pollution and Detroit.</p>
-            </div>
-            <div className="search-trace">
-              <span>101 indexed synthetic files searched</span>
-              <span className="trace-line" />
-              <span>0.8s</span>
-            </div>
-            <div className="message agent-message">
-              <span className="avatar agent">F</span>
-              <div>
-                <p className="found-label">Sample evidence · permission allowed</p>
-                <h3>Environmental Justice Scholarship Essay</h3>
-                <p className="snippet">“Detroit showed nearly 1,000 PM1 particles—ten times higher than surrounding areas.”</p>
-                <div className="result-meta"><span>Google Docs</span><span>¶ 47–51</span><span>Prototype</span><button disabled>Source link planned</button></div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <div className="source-strip">
-        <div className="shell source-inner">
-          <span>Govern access across</span>
-          <div className="source-logo"><b>△</b> Google Drive <small>Sample MVP</small></div>
-          <div className="source-logo"><b>▦</b> Microsoft 365 <small>Planned</small></div>
-          <div className="source-logo"><b>N</b> Notion <small>Planned</small></div>
-          <div className="source-logo"><b>◇</b> Dropbox <small>Planned</small></div>
-          <div className="source-logo"><b>●</b> Box <small>Planned</small></div>
-        </div>
+    <section className="marketing-demo marketing-shell" id="demo" aria-labelledby="demo-title">
+      <div className="marketing-section-head"><div><span>56 seconds</span><h2 id="demo-title">See the retrieval gap.</h2></div><p>Two prices. One approved source. One inaccessible record. Every known source accounted for.</p></div>
+      <div className="marketing-video-frame">
+        <video controls preload="metadata" poster="/find-anything-demo-poster.png" playsInline onPlay={() => { if (!viewed.current) { viewed.current = true; marketingEvent("demo_viewed"); } }}>
+          <source src="/find-anything-demo.mp4" type="video/mp4" />
+          <track default kind="captions" src="/find-anything-demo-captions.vtt" srcLang="en" label="English" />
+          Your browser does not support the demo video.
+        </video>
       </div>
+      <details className="marketing-transcript"><summary>Read the demo description</summary><p>An agent finds two enterprise prices: an approved final at $120,000 per year plus $25,000 implementation, and an older draft at $95,000 plus $20,000. Find Anything keeps both visible, ranks the explicitly authoritative final first, excludes an unavailable Finance record without exposing its contents, and records citations, confidence, coverage, trace, replay, receipt, and diff.</p></details>
+    </section>
 
-      <section className="section shell" id="how">
-        <div className="section-kicker">A control plane, not another search chatbot</div>
-        <div className="section-heading-grid">
-          <h2>Retrieval should be<br />inspectable evidence.</h2>
-          <p>Most systems return a few plausible chunks and hide the rest of the process. Find Anything exposes corpus coverage, permission decisions, exclusions, exact citations, and the configuration behind every result.</p>
-        </div>
-        <div className="feature-grid">
-          <article><span className="feature-number">01</span><h3>Coverage accounted</h3><p>Report accessible, indexed, searched, skipped, and failed files. Never claim completeness without evidence.</p></article>
-          <article><span className="feature-number">02</span><h3>Retrieval traced</h3><p>Inspect query expansion, candidates, scores, filters, permission decisions, exclusions, and latency.</p></article>
-          <article><span className="feature-number">03</span><h3>Evidence located</h3><p>Cite exact paragraphs, slides, speaker notes, sheet ranges, PDF pages, figures, and comments.</p></article>
-          <article><span className="feature-number">04</span><h3>Records exported</h3><p>Export the query, corpus state, returned evidence, exclusions, and policy. Immutability is planned, not implemented.</p></article>
-        </div>
-        <div className="control-list"><p><b>Find Anything sits between an agent and private files to control:</b></p><ul><li>what may be searched;</li><li>which actor identity and permissions apply;</li><li>how retrieval is performed;</li><li>what was excluded or missed;</li><li>where exact evidence was found;</li><li>how the retrieval was logged.</li></ul><small>Current implementation: local sample corpus and typed contracts. Live source permissions and connectors are planned.</small></div>
-      </section>
+    <section className="marketing-problem marketing-shell" id="product">
+      <div className="marketing-kicker">The problem</div><h2>An answer can look certain while its evidence is not.</h2>
+      <div className="marketing-conflict">
+        <article className="is-final"><header><span>Approved final</span><small>Newest · authoritative</small></header><h3>Pricing Final.pdf</h3><strong>$120,000/year</strong><p>$25,000 implementation</p></article>
+        <div className="marketing-conflict-mark" aria-label="Conflicts with">≠</div>
+        <article className="is-draft"><header><span>Working draft</span><small>Older</small></header><h3>Pricing Draft.pdf</h3><strong>$95,000/year</strong><p>$20,000 implementation</p></article>
+      </div>
+      <p className="marketing-explanation">Ordinary retrieval may quote whichever file ranks first. Find Anything preserves the contradiction, cites both sources, and explains that the final ranked highest because it is newer, approved, and explicitly authoritative.</p>
+    </section>
 
-      <section className="playground-section" id="playground">
-        <div className="shell">
-          <div className="section-kicker light">Interactive prototype · Sample corpus</div>
-          <div className="playground-heading"><h2>See what retrieval<br />usually hides.</h2><p>This prototype uses sample trace and coverage data. It demonstrates the product contract and does not represent a live corpus-wide retrieval backend.</p></div>
-          <div className="console">
-            <aside className="console-sidebar">
-              <div className="workspace-name"><span>FA</span><div><b>My first workspace</b><small>ws_7Qx9N2kM</small></div></div>
-              <div className="sidebar-label">Sources</div>
-              {sourceNames.map((source) => (
-                <button className={`source-button ${source.status === "Sample corpus" ? "connected" : ""}`} key={source.name} disabled title={source.status === "Planned" ? "Connector is planned and not implemented." : "Repository sample corpus; no live connector."}>
-                  <span className="source-icon">{source.name.charAt(0)}</span><span>{source.name}</span><i>{source.status}</i>
-                </button>
-              ))}
-              <div className="api-key-card"><small>API key example</small><code>fa_live_your_key_here</code><button onClick={copyKey}>{copied ? "Copied" : "Copy"}</button></div>
-              <div className="sidebar-foot"><span className="green-dot" /> Local sample search operational</div>
-            </aside>
+    <section className="marketing-accounting">
+      <div className="marketing-shell">
+        <div className="marketing-kicker">The difference</div><h2>Nothing is silently missed.</h2><p className="marketing-accounting-lede">For sources already known to the indexed workspace, Find Anything shows what was searched, trusted, inaccessible, excluded, failed, or otherwise unavailable. It does not claim knowledge of undiscovered systems.</p>
+        <div className="marketing-accounting-flow"><div><strong>8</strong><span>known sources</span></div><b>→</b><div><strong>7</strong><span>accessible and searched</span></div><i>+</i><div className="unavailable"><strong>1</strong><span>unavailable and excluded</span></div></div>
+        <div className="marketing-accounting-meta"><span>Confidence <b>65/100</b></span><span>Exact citations and source links</span><span>Every known source accounted for</span></div>
+      </div>
+    </section>
 
-            <div className="console-main">
-              <div className="console-top"><div><span>Retrieval playground</span><small>Synthetic workspace · 105 file records</small></div><span className="read-only">Not live Drive data</span></div>
-              <form className="search-form" onSubmit={runSearch}>
-                <div className="mode-selector" aria-label="Search mode">
-                  {([['ranked','Best matches'],['exhaustive','Find all'],['exact','Exact evidence'],['newest','Newest version']] as const).map(([value, label]) => <button type="button" key={value} className={searchMode === value ? "active" : ""} onClick={() => setSearchMode(value)}>{label}</button>)}
-                </div>
-                <label htmlFor="agent-query">Search private files with evidence</label>
-                <div className="search-box"><textarea id="agent-query" value={query} onChange={(event) => setQuery(event.target.value)} rows={3} /><button type="submit" disabled={searching}>{searching ? "Searching…" : "Run retrieval →"}</button></div>
-                <div className="suggestions"><span>Try:</span><button type="button" onClick={() => setQuery("Which presentation had the chart about customer growth?")}>Find a forgotten slide</button><button type="button" onClick={() => setQuery("Show me the newest version of my climate research project.")}>Find the newest version</button></div>
-                <div className="filter-row" aria-label="Prototype retrieval filters">
-                  <label>Source<select value={filters.source ?? ""} onChange={(event)=>setFilters({...filters,source:event.target.value?"google_drive":undefined})}><option value="">All sample sources</option><option value="google_drive">Google Drive sample</option></select></label>
-                  <label>File type<select value={filters.fileType ?? ""} onChange={(event)=>setFilters({...filters,fileType:event.target.value||undefined})}><option value="">All types</option><option value="document">Google Doc</option><option value="presentation">Slides</option><option value="pdf">PDF</option><option value="spreadsheet">Spreadsheet</option></select></label>
-                  <label>Owner<select value={filters.owner ?? ""} onChange={(event)=>setFilters({...filters,owner:event.target.value||undefined})}><option value="">Any owner</option><option>Jordan Lee</option><option>Maya Chen</option></select></label>
-                  <label>Folder<select value={filters.folder ?? ""} onChange={(event)=>setFilters({...filters,folder:event.target.value||undefined})}><option value="">Any folder</option><option>/Research</option><option>/Company</option><option>/Applications</option></select></label>
-                </div>
-              </form>
-              <div className={`results ${searching ? "loading" : ""}`} aria-live="polite">
-                <div className="layer-tabs" role="tablist" aria-label="Retrieval output layers">
-                  <button className={activeLayer==="results"?"active":""} onClick={()=>setActiveLayer("results")}>1 · Search Results <span>{response.totalMatches}</span></button>
-                  <button className={activeLayer==="coverage"?"active":""} onClick={()=>setActiveLayer("coverage")}>2 · Coverage Report <span>{response.coverage.completenessStatus}</span></button>
-                  <button className={activeLayer==="trace"?"active":""} onClick={()=>{setActiveLayer("trace");trackEvent("trace_viewed",{workspaceId:"ws_synthetic_demo",plan:"demo",searchMode,origin:"ui",completenessStatus:response.coverage.completenessStatus})}}>3 · Retrieval Trace <span>simulated</span></button>
-                </div>
-                {activeLayer==="results" && <div className="layer-panel">
-                  <div className="results-head"><p><b>{response.totalMatches} matching sample file{response.totalMatches===1?"":"s"} found.</b> {response.totalMatches?`Showing ${response.results.length} on page ${response.page}.`:"Try a term from the sample corpus."}</p><span>{searchMode === "exhaustive" ? "Find All prototype" : searchMode === "exact" ? "Exact evidence prototype" : searchMode === "newest" ? "Newest-version prototype" : "Best Matches"}</span></div>
-                  {!response.results.length && <div className="empty-state"><b>No matching sample files</b><p>The local sample corpus has air-quality research, customer-growth slides, and a revenue spreadsheet. Unrelated queries correctly return no results.</p></div>}
-                  {response.results.map((result) => (
-                    <article className="file-result" key={result.evidence.id}>
-                      <div className="file-rank">{result.rank}</div>
-                      <div className="file-body"><div className="file-title-row"><h3>{result.file.name}</h3><span className="confidence">{result.score}%</span><span className="permission-badge">Permission: allowed*</span></div><div className="file-meta"><span>Google Drive sample</span><span>{result.file.mimeType}</span><span>{result.citation}</span></div><p className="file-reason">{result.whyMatched}</p><blockquote>{result.evidence.text}</blockquote><small>*Local sample permission snapshot—not live Google Drive enforcement.</small></div>
-                      <button className="open-result" disabled title="Source links are unavailable for repository sample files.">Prototype link</button>
-                    </article>
-                  ))}
-                  {response.totalPages>1 && <div className="pagination"><button disabled={response.page<=1} onClick={()=>changePage(response.page-1)}>← Previous</button><span>Page {response.page} of {response.totalPages}</span><button disabled={response.page>=response.totalPages} onClick={()=>changePage(response.page+1)}>Next →</button></div>}
-                </div>}
-                {activeLayer==="coverage" && <div className="layer-panel coverage-card">
-                  <div className="coverage-head"><div><span className={`coverage-status ${response.coverage.complete?"complete":""}`}>{response.coverage.completenessStatus}</span><b>Sample corpus coverage</b></div><button className="info-button" title="Complete means every eligible accessible file was successfully evaluated.">Definitions ⓘ</button></div>
-                  {!response.coverage.complete && <p className="coverage-warning"><b>Results may be incomplete.</b> {response.coverage.warnings.slice(1).join(" ")}</p>}
-                  <div className="coverage-metrics"><span title="The actor can theoretically access the file according to the connected source."><b>{response.coverage.accessibleFiles}</b>Accessible</span><span title="A searchable representation currently exists."><b>{response.coverage.indexedFiles}</b>Indexed</span><span title="The file was actually included in this retrieval execution."><b>{response.coverage.searchedFiles}</b>Searched</span><span title="The file met the declared matching criteria."><b>{response.coverage.matchedFiles}</b>Matches</span><span><b>{response.coverage.excludedByFilter}</b>Excluded by filters</span><span><b>{response.coverage.permissionDenied}</b>Permission denied</span><span><b>{response.coverage.extractionFailed}</b>Extraction failures</span><span><b>{response.coverage.awaitingIndex}</b>Awaiting index</span><span title="Complete means every eligible accessible file was successfully evaluated."><b>{response.coverage.complete?"Yes":"No"}</b>Complete</span></div>
-                  <div className="definition-grid"><p><b>Accessible</b>The actor can theoretically access the file according to the source.</p><p><b>Indexed</b>A searchable representation currently exists.</p><p><b>Searched</b>The file was included in this execution.</p><p><b>Matched</b>The file met the declared matching criteria.</p><p><b>Complete</b>Every eligible accessible file was successfully evaluated.</p></div>
-                  <div className="receipt-actions"><button onClick={exportReceipt}>Export sample retrieval record ↓</button></div>
-                </div>}
-                {activeLayer==="trace" && <div className="layer-panel trace-panel">
-                  <div className="trace-disclosure"><span>Simulated trace</span>This trace combines executed local keyword stages with clearly marked planned or simulated production stages.</div>
-                  <dl className="trace-summary"><div><dt>Trace ID</dt><dd>{response.trace.traceId}</dd></div><div><dt>Workspace</dt><dd>{response.trace.workspace}</dd></div><div><dt>Actor</dt><dd>{response.trace.actor}</dd></div><div><dt>Original query</dt><dd>{response.trace.originalQuery}</dd></div><div><dt>Interpreted query</dt><dd>{response.trace.interpretedQuery||"No searchable terms"}</dd></div><div><dt>Expanded terms</dt><dd>{response.trace.expandedTerms.join(", ")||"None"}</dd></div><div><dt>Search mode</dt><dd>{response.trace.searchMode}</dd></div><div><dt>Corpus snapshot</dt><dd>{response.trace.corpusSnapshotAt}</dd></div></dl>
-                  <div className="trace-waterfall">{response.trace.stages.map((stage)=><div key={stage.name}><span>{stage.name} <em>{stage.status}</em></span><i style={{width:`${Math.max(5,stage.candidateCountAfter*12)}%`}}/><b>{stage.latencyMs} ms</b><small>{stage.detail}</small></div>)}</div>
-                  <div className="trace-counts"><span><b>{response.trace.keywordCandidates}</b>Keyword candidates</span><span><b>{response.trace.semanticCandidates??"—"}</b>Semantic candidates</span><span><b>{response.trace.mergedCandidates}</b>Merged candidates</span><span><b>{response.trace.exclusions.length}</b>Exclusions</span><span><b>{response.trace.permissionDecisions.length}</b>Permission decisions</span><span><b>{response.trace.completenessStatus}</b>Completeness</span></div>
-                </div>}
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+    <section className="marketing-capabilities marketing-shell">
+      <div className="marketing-section-head"><div><span>Evidence, not confidence theater</span><h2>Inspect the retrieval decision.</h2></div><p>Start with the answer and evidence. Open the technical record only when you need it.</p></div>
+      <div className="marketing-capability-grid">
+        <article><span>01</span><h3>Conflicts and authority</h3><p>Keep contradictory sources visible and show the deterministic signals behind ranking.</p></article>
+        <article><span>02</span><h3>Permissions and coverage</h3><p>Search only authorized records and disclose inaccessible or excluded known sources.</p></article>
+        <article><span>03</span><h3>Exact citations</h3><p>Return evidence locations and source links instead of unsupported summaries.</p></article>
+        <article><span>04</span><h3>Trace, replay, receipt, diff</h3><p>Inspect execution, reproduce its stages, preserve its record, and see what changed.</p></article>
+      </div>
+    </section>
 
-      <section className="comparison-section shell" id="comparison">
-        <div className="section-kicker">Product contract and implementation status</div>
-        <div className="section-heading-grid"><h2>Typical AI search<br />versus a control plane.</h2><p>Status labels describe this repository today—not future marketing claims.</p></div>
-        <div className="comparison-table" role="table" aria-label="Typical AI search compared with Find Anything">
-          <div className="comparison-row comparison-head" role="row"><span>Capability</span><span>Typical AI search</span><span>Find Anything status</span></div>
-          {[
-            ["Returns likely matches","Common","Prototype: local sample corpus"],
-            ["Reports total searchable corpus","Rare","Prototype: sample coverage"],
-            ["Reports indexing failures","Rare","Prototype: sample index states"],
-            ["Exact slide/page/paragraph citations","Varies","Prototype: structural sample units"],
-            ["Search receipt","Rare","Prototype: exportable JSON record"],
-            ["Model-independent API","Varies","Proposed REST and MCP contract"],
-            ["Exhaustive matching mode","Uncommon","Prototype UI; production engine planned"],
-            ["Query-time permission enforcement","Varies","Planned for Google Drive MVP"],
-            ["Coverage and exclusion reporting","Uncommon","Prototype logic; live connectors planned"],
-          ].map(([capability,typical,status])=><div className="comparison-row" role="row" key={capability}><span>{capability}</span><span>{typical}</span><span><i className={status.startsWith("Planned")||status.includes("planned")?"planned":"prototype"}>{status.startsWith("Planned")||status.includes("planned")?"Planned":"Prototype"}</i>{status}</span></div>)}
-        </div>
-      </section>
+    <section className="marketing-partners marketing-shell" id="design-partners">
+      <div><div className="marketing-kicker">Design-partner beta</div><h2>For teams building agents over messy internal knowledge.</h2><p>We are onboarding a small number of AI platform, knowledge, security, and operations teams. Begin with a limited, non-sensitive Google Drive folder and evaluate retrieval quality with the founder.</p><ul><li>Guided setup and retrieval review</li><li>Direct input into the retrieval contract and developer API</li><li>Clear deletion and disconnect controls</li></ul></div>
+      <div className="marketing-connectors"><div><b>Google Drive</b><span>Available now</span></div>{["Notion", "Microsoft 365", "Slack", "GitHub", "Jira", "Dropbox", "Box"].map(name => <div key={name}><b>{name}</b><span>Planned</span></div>)}</div>
+    </section>
 
-      <section className="developer-section shell" id="developers">
-        <div>
-          <div className="section-kicker">Model-neutral retrieval infrastructure</div>
-          <h2>One policy layer.<br />Every agent framework.</h2>
-          <p>Use REST, MCP, or an SDK without locking retrieval to one model provider. Every request can declare its search mode, completeness policy, actor identity, filters, and evidence requirements.</p>
-          <ul><li><span>◌</span> Permission enforcement · Planned</li><li><span>◇</span> Coverage reporting · Prototype</li><li><span>◇</span> Structural citations · Prototype</li><li><span>◇</span> Exportable records · Prototype</li></ul>
-        </div>
-        <div className="code-card">
-          <div className="code-tabs">{(["mcp", "typescript", "curl"] as const).map((tab) => <button key={tab} onClick={() => setCodeTab(tab)} className={codeTab === tab ? "active" : ""}>{tab === "mcp" ? "MCP" : tab === "typescript" ? "TypeScript" : "cURL"}</button>)}</div>
-          <pre><code>{code}</code></pre>
-          <div className="code-foot"><span><i /> Proposed API contract</span><button onClick={() => navigator.clipboard?.writeText(code)}>Copy code</button></div>
-        </div>
-      </section>
+    <section className="marketing-request" id="request-access">
+      <div className="marketing-shell marketing-request-grid">
+        <div><div className="marketing-kicker">{intent === "demo" ? "Book a product walkthrough" : "Request beta access"}</div><h2>{intent === "demo" ? "Bring us your hardest retrieval failure." : "Help define trustworthy retrieval."}</h2><p>Access is reviewed individually. Submitting this form does not create an account or enable Google Drive access.</p><div className="marketing-intent-switch" aria-label="Request type"><button className={intent === "beta" ? "active" : ""} onClick={() => setIntent("beta")}>Beta access</button><button className={intent === "demo" ? "active" : ""} onClick={() => setIntent("demo")}>Book a demo</button></div></div>
+        {status === "success" ? <div className="marketing-success" role="status"><span>Request received</span><h3>Thank you.</h3><p>{message}</p><button onClick={() => { setStatus("idle"); setStartedAt(Date.now()); }}>Submit another request</button></div> : <form className="marketing-form" onSubmit={submit} aria-describedby="request-privacy">
+          <div className="marketing-honeypot" aria-hidden="true"><label>Website<input name="website" tabIndex={-1} autoComplete="off" /></label></div>
+          <div className="marketing-form-row"><label>Full name<input name="fullName" autoComplete="name" maxLength={120} required /></label><label>Work email<input name="email" type="email" autoComplete="email" maxLength={320} required /></label></div>
+          <div className="marketing-form-row"><label>Company<input name="company" autoComplete="organization" maxLength={160} required /></label><label>Job title<input name="jobTitle" autoComplete="organization-title" maxLength={160} required /></label></div>
+          <label>Company size<select name="companySize" required defaultValue=""><option value="" disabled>Select size</option><option>1-10</option><option>11-50</option><option>51-200</option><option>201-1000</option><option>1001+</option></select></label>
+          <fieldset><legend>Current knowledge tools</legend><div className="marketing-checks">{tools.map(tool => <label key={tool}><input type="checkbox" name="knowledgeTools" value={tool} />{tool}</label>)}</div></fieldset>
+          <div className="marketing-form-row"><label>Do you use or build internal AI agents?<select name="usesAiAgents" required defaultValue=""><option value="" disabled>Select one</option><option value="yes">Yes</option><option value="no">No</option></select></label><label>Willing to test with a limited, non-sensitive folder?<select name="willingLimitedFolder" required defaultValue=""><option value="" disabled>Select one</option><option value="yes">Yes</option><option value="no">Not currently</option></select></label></div>
+          <label>What retrieval or knowledge problem are you trying to solve?<textarea name="knowledgeProblem" minLength={20} maxLength={2500} required /></label>
+          {status === "error" && <p className="marketing-form-error" role="alert">{message}</p>}
+          <p id="request-privacy" className="marketing-form-privacy">Stored securely for beta evaluation. Never include credentials, document contents, or confidential information.</p>
+          <button className="marketing-primary" disabled={status === "submitting"}>{status === "submitting" ? "Submitting…" : intent === "demo" ? "Request a demo →" : "Request beta access →"}</button>
+        </form>}
+      </div>
+    </section>
 
-      <section className="cta-section">
-        <div className="shell cta-inner"><div><div className="eyebrow dark"><span className="pulse" /> Verify retrieval before trusting the answer</div><h2>Know what your agent searched.<br />Prove what it found.</h2></div><a className="button button-light" href="#playground">Inspect the prototype <span>→</span></a></div>
-      </section>
-
-      <footer className="footer shell"><a className="brand" href="#top"><span className="brand-mark">F</span><span>Find Anything</span></a><p>Exact, permission-aware retrieval for authorized files.</p><div><a href="/docs">API docs</a><a href="/status">Status</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/support">Support</a><a href="/trust">Trust</a></div><span>© 2026</span></footer>
-    </main>
-  );
+    <footer className="marketing-footer marketing-shell"><div><a className="marketing-brand" href="#top"><span>F</span>Find Anything</a><p>Trusted knowledge for AI agents. Private beta.</p></div><nav aria-label="Legal and trust"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/trust">Security</a><a href="mailto:security@findanything.dev">Security contact</a><a href="mailto:hello@findanything.dev">Contact</a></nav></footer>
+  </main>;
 }
