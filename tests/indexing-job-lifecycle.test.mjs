@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import {
   indexingAccounting,
+  isIndexingJobStale,
   nextIndexingAttemptNumber,
 } from "../lib/indexing/job-lifecycle.ts";
 
@@ -42,11 +43,18 @@ test("completion requires every discovered file to be accounted for", () => {
   assert.equal(indexingAccounting({ discovered: 518, processed: 518, indexed: 500, unsupported: 17, failed: 1 }).fullyAccounted, true);
 });
 
+test("stale running jobs recover without a second user action", () => {
+  const now = Date.parse("2026-07-20T04:20:00.000Z");
+  assert.equal(isIndexingJobStale("2026-07-20T04:16:09.875Z", now), true);
+  assert.equal(isIndexingJobStale("2026-07-20T04:19:30.000Z", now), false);
+});
+
 test("job persistence, stale recovery, and cross-request continuation stay wired", async () => {
-  const [jobs, worker, dashboard] = await Promise.all([
+  const [jobs, worker, dashboard, workspaceRoute] = await Promise.all([
     readFile(new URL("../lib/indexing/jobs.ts", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/workspace-dashboard.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/workspaces/[workspaceId]/route.ts", import.meta.url), "utf8"),
   ]);
   assert.match(jobs, /max\(indexingJobAttempts\.attemptNumber\)/);
   assert.match(jobs, /INDEXING_ATTEMPT_PERSISTENCE_FAILED/);
@@ -60,4 +68,7 @@ test("job persistence, stale recovery, and cross-request continuation stay wired
   assert.match(dashboard, /setInterval\(\(\) => void load\(true\), 5000\)/);
   assert.doesNotMatch(dashboard, /router\.refresh\(/);
   assert.doesNotMatch(dashboard, /location\.reload\(/);
+  assert.match(workspaceRoute, /isIndexingJobStale/);
+  assert.match(workspaceRoute, /enqueueIndexingJob/);
+  assert.match(workspaceRoute, /x-find-anything-job-token/);
 });

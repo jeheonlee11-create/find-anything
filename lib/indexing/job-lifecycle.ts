@@ -22,3 +22,13 @@ export function indexingAccounting(input: {
       input.discovered > 0 && input.processed >= input.discovered,
   };
 }
+
+export function isIndexingJobStale(
+  heartbeatAt: string | null | undefined,
+  now = Date.now(),
+  staleAfterMs = 120_000,
+) {
+  if (!heartbeatAt) return true;
+  const heartbeat = Date.parse(heartbeatAt);
+  return !Number.isFinite(heartbeat) || now - heartbeat >= staleAfterMs;
+}
