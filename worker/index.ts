@@ -44,7 +44,7 @@ const worker = {
       jobId = response.headers.get("x-find-anything-job-id"),
       jobToken = response.headers.get("x-find-anything-job-token");
     if (jobId && jobToken) {
-      ctx.waitUntil(runInternalContinuation(request.url, jobId, jobToken, env, ctx));
+      ctx.waitUntil(dispatchInternalContinuation(request.url, jobId, jobToken));
       const headers = new Headers(response.headers);
       headers.delete("x-find-anything-job-id");
       headers.delete("x-find-anything-job-token");
@@ -58,35 +58,15 @@ const worker = {
   },
 };
 
-async function runInternalContinuation(
+async function dispatchInternalContinuation(
   requestUrl: string,
   jobId: string,
   jobToken: string,
-  env: Env,
-  ctx: ExecutionContext,
 ) {
-  const continuationUrl = new URL("/api/internal/indexing/continue", requestUrl),
-    response = await handler.fetch(
-      new Request(continuationUrl, {
-        method: "POST",
-        headers: {
-          "x-find-anything-job-id": jobId,
-          "x-find-anything-job-token": jobToken,
-        },
-      }),
-      env,
-      ctx,
-    ),
-    shouldContinue =
-      response.ok &&
-      response.headers.get("x-find-anything-job-id") === jobId &&
-      response.headers.get("x-find-anything-job-token") === jobToken;
-  await response.arrayBuffer();
-  if (!shouldContinue) return;
-
-  // Start the next bounded batch as a new Worker request. This creates a fresh
-  // execution lifetime, so progress continues even after the browser closes.
-  await fetch(
+  const continuationUrl = new URL("/api/internal/indexing/continue", requestUrl);
+  // Give each bounded batch its own Worker request lifetime. The continuation
+  // response is intercepted by the Worker and dispatches the following batch.
+  const response = await fetch(
     new Request(continuationUrl, {
       method: "POST",
       headers: {
@@ -94,7 +74,8 @@ async function runInternalContinuation(
         "x-find-anything-job-token": jobToken,
       },
     }),
-  ).then((nextResponse) => nextResponse.arrayBuffer());
+  );
+  await response.arrayBuffer();
 }
 
 export default worker;

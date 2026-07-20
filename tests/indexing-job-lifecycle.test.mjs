@@ -60,8 +60,10 @@ test("job persistence, stale recovery, and cross-request continuation stay wired
   assert.match(jobs, /INDEXING_ATTEMPT_PERSISTENCE_FAILED/);
   assert.match(jobs, /filesUnsupported/);
   assert.match(jobs, /INDEXING_INVENTORY_UNACCOUNTED/);
-  assert.match(worker, /Start the next bounded batch as a new Worker request/);
+  assert.match(worker, /Give each bounded batch its own Worker request lifetime/);
   assert.match(worker, /await fetch\(/);
+  assert.match(worker, /dispatchInternalContinuation/);
+  assert.doesNotMatch(worker, /handler\.fetch\(\s*new Request\(continuationUrl/);
   assert.match(dashboard, /Indexing \$\{job\.processedCount\} of \$\{job\.discoveredCount\} files/);
   assert.match(dashboard, /remaining/);
   assert.match(dashboard, /unsupportedCount/);
