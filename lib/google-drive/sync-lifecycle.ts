@@ -100,6 +100,9 @@ export function planSyncContinuation<T extends { id: string; modifiedTime: strin
   const failedFiles = currentFiles
     .map((file) => previousBySourceId.get(file.id))
     .filter((file) => file?.indexStatus === "failed");
+  const unsupportedFiles = currentFiles
+    .map((file) => previousBySourceId.get(file.id))
+    .filter((file) => file?.indexStatus === "unsupported");
   return {
     previousBySourceId,
     pendingFiles,
@@ -107,6 +110,7 @@ export function planSyncContinuation<T extends { id: string; modifiedTime: strin
     filesUnchanged: currentFiles.length,
     filesIndexed: indexedFiles.length,
     filesFailed: failedFiles.length,
+    filesUnsupported: unsupportedFiles.length,
     structuredFiles: indexedFiles.filter(
       (file) => file?.extractionMode === "structured",
     ).length,

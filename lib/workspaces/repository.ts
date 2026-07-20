@@ -2,6 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   connectors,
+  indexingJobs,
   memberships,
   sourceFiles,
   syncRuns,
@@ -150,5 +151,28 @@ export async function workspaceDashboard(actorId: string, workspaceId: string) {
           .limit(1)
           .then((rows) => rows[0] ?? null)
       : null;
-  return { workspace, demoMode, connector: connector?{...connector,scopeVerified:demoMode||new Set(connector.grantedScopes.split(/\s+/)).has("https://www.googleapis.com/auth/drive.readonly" )}:null, files, latestSync };
+  const indexingJob = connector
+    ? await db
+        .select({
+          id: indexingJobs.id,
+          status: indexingJobs.status,
+          processedCount: indexingJobs.processedCount,
+          discoveredCount: indexingJobs.discoveredCount,
+          indexedCount: indexingJobs.indexedCount,
+          unsupportedCount: indexingJobs.unsupportedCount,
+          failedCount: indexingJobs.failedCount,
+          structuralCount: indexingJobs.structuralCount,
+          fallbackCount: indexingJobs.fallbackCount,
+          lastErrorCode: indexingJobs.lastErrorCode,
+          heartbeatAt: indexingJobs.heartbeatAt,
+          completedAt: indexingJobs.completedAt,
+          updatedAt: indexingJobs.updatedAt,
+        })
+        .from(indexingJobs)
+        .where(eq(indexingJobs.connectorId, connector.id))
+        .orderBy(desc(indexingJobs.updatedAt))
+        .limit(1)
+        .then((rows) => rows[0] ?? null)
+    : null;
+  return { workspace, demoMode, connector: connector?{...connector,scopeVerified:demoMode||new Set(connector.grantedScopes.split(/\s+/)).has("https://www.googleapis.com/auth/drive.readonly" )}:null, files, latestSync, indexingJob };
 }

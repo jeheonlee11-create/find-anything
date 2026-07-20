@@ -36,6 +36,16 @@ const SYNC_TOTAL_BUDGET_MS = 12_000;
 const SYNC_BATCH_SIZE = 4;
 const UNSUPPORTED_BATCH_SIZE = 20;
 const refreshesInFlight = new Map<string, Promise<string>>();
+export type DriveSyncProgress = {
+  filesDiscovered: number;
+  filesProcessed: number;
+  filesIndexed: number;
+  filesUnsupported: number;
+  filesFailed: number;
+  structuredFiles: number;
+  fallbackFiles: number;
+  paginationComplete: boolean;
+};
 export async function usableAccessToken(connector: StoredConnector) {
   if (
     connector.tokenExpiresAt &&
@@ -110,7 +120,10 @@ async function waitForConcurrentRefresh(connectorId: string) {
   }
   throw new Error("GOOGLE_TOKEN_REFRESH_TIMEOUT");
 }
-export async function synchronizeGoogleDrive(connector: StoredConnector) {
+export async function synchronizeGoogleDrive(
+  connector: StoredConnector,
+  onProgress?: (progress: DriveSyncProgress) => Promise<void>,
+) {
   const requestStartedAt = Date.now(),
     runId = await beginSync(connector.id, true);
   let discovered = 0,
@@ -124,6 +137,7 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
     filesRemoved = 0,
     paginationComplete = false,
     filesProcessed = 0,
+    filesUnsupported = 0,
     stoppedEarly = false;
   const fallbackReasons: Record<string, number> = {};
   await setConnectorStatus(connector.id, "syncing");
@@ -170,6 +184,17 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
       paginationComplete: true,
       nextPageToken: null,
     });
+    filesUnsupported = continuation.filesUnsupported;
+    await reportProgress(onProgress, {
+      filesDiscovered: discovered,
+      filesProcessed,
+      filesIndexed: indexed,
+      filesUnsupported,
+      filesFailed: failed,
+      structuredFiles,
+      fallbackFiles,
+      paginationComplete: true,
+    });
     for (
       let offset = 0;
       offset < unsupportedFiles.length;
@@ -196,6 +221,7 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
         ),
       );
       filesProcessed += batch.length;
+      filesUnsupported += batch.length;
       await checkpointSync(runId, {
         filesDiscovered: discovered,
         filesIndexed: indexed,
@@ -207,6 +233,16 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
         filesUnchanged,
         paginationComplete: true,
         nextPageToken: null,
+      });
+      await reportProgress(onProgress, {
+        filesDiscovered: discovered,
+        filesProcessed,
+        filesIndexed: indexed,
+        filesUnsupported,
+        filesFailed: failed,
+        structuredFiles,
+        fallbackFiles,
+        paginationComplete: true,
       });
     }
     for (let offset = 0; offset < extractableFiles.length; offset += SYNC_BATCH_SIZE) {
@@ -286,7 +322,10 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
           failed += 1;
           continue;
         }
-        if (result.outcome === "unsupported") continue;
+        if (result.outcome === "unsupported") {
+          filesUnsupported += 1;
+          continue;
+        }
         indexed += 1;
         if (result.structured) structuredFiles += 1;
         else if (result.fallbackReason) {
@@ -309,6 +348,16 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
         filesUnchanged,
         paginationComplete: true,
         nextPageToken: null,
+      });
+      await reportProgress(onProgress, {
+        filesDiscovered: discovered,
+        filesProcessed,
+        filesIndexed: indexed,
+        filesUnsupported,
+        filesFailed: failed,
+        structuredFiles,
+        fallbackFiles,
+        paginationComplete: true,
       });
     }
     filesRemoved = await reconcileMissingSourceFiles(
@@ -360,6 +409,7 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
       filesRemoved,
       paginationComplete: true,
       filesProcessed,
+      filesUnsupported,
       filesDeferred: Math.max(0, pendingFiles.length - (filesProcessed - filesUnchanged)),
       continuationNeeded: stoppedEarly,
     };
@@ -399,6 +449,13 @@ export async function synchronizeGoogleDrive(connector: StoredConnector) {
     );
     throw error;
   }
+}
+
+async function reportProgress(
+  callback: ((progress: DriveSyncProgress) => Promise<void>) | undefined,
+  progress: DriveSyncProgress,
+) {
+  if (callback) await callback(progress);
 }
 function safeErrorCode(error: unknown) {
   const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";

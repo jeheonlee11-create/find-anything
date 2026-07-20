@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, max, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   connectors,
@@ -9,6 +9,7 @@ import {
 import { synchronizeGoogleDrive } from "@/lib/google-drive/sync";
 import { indexedWorkspaceFiles } from "@/lib/workspace-search/repository";
 import { refreshWorkspaceConflicts } from "@/lib/conflicts/repository";
+import { nextIndexingAttemptNumber } from "@/lib/indexing/job-lifecycle";
 
 export const INDEXING_VERSION = "literal-v1";
 export const EXTRACTION_VERSION = "structural-v1";
@@ -132,42 +133,67 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
       .returning()
       .get();
   if (!claimed) return null;
-  const attemptNumber = claimed.continuationCount + 1,
-    attemptId = `attempt_${jobId}_${attemptNumber}`;
-  await db.insert(indexingJobAttempts).values({
-    id: attemptId,
-    jobId,
-    attemptNumber,
-    status: "running",
-    startedAt: now,
-    heartbeatAt: now,
-  });
-  const connector = await db
-    .select()
-    .from(connectors)
-    .where(
-      and(
-        eq(connectors.id, claimed.connectorId),
-        eq(connectors.workspaceId, claimed.workspaceId),
-      ),
-    )
-    .get();
-  if (!connector) {
-    await failJob(jobId, attemptId, "CONNECTOR_NOT_FOUND", false);
-    return null;
-  }
-  if (connector.status === "reauthorization_required") {
-    await failJob(jobId, attemptId, "GOOGLE_REAUTHORIZATION_REQUIRED", true);
-    return null;
-  }
+  let attemptId: string | null = null;
   try {
-    const result = await synchronizeGoogleDrive(connector),
-      finishedAt = new Date().toISOString(),
-      unsupportedCount = Math.max(
-        0,
-        result.filesDiscovered - result.filesIndexed - result.filesFailed,
+    const persistedAttempt = await db
+        .select({ value: max(indexingJobAttempts.attemptNumber) })
+        .from(indexingJobAttempts)
+        .where(eq(indexingJobAttempts.jobId, jobId))
+        .get(),
+      attemptNumber = nextIndexingAttemptNumber(
+        claimed.continuationCount,
+        persistedAttempt?.value,
       ),
-      status = result.continuationNeeded
+      candidateAttemptId = `attempt_${jobId}_${attemptNumber}`;
+    await db.insert(indexingJobAttempts).values({
+      id: candidateAttemptId,
+      jobId,
+      attemptNumber,
+      status: "running",
+      startedAt: now,
+      heartbeatAt: now,
+    });
+    attemptId = candidateAttemptId;
+    const connector = await db
+      .select()
+      .from(connectors)
+      .where(
+        and(
+          eq(connectors.id, claimed.connectorId),
+          eq(connectors.workspaceId, claimed.workspaceId),
+        ),
+      )
+      .get();
+    if (!connector) throw new Error("CONNECTOR_NOT_FOUND");
+    if (connector.status === "reauthorization_required")
+      throw new Error("GOOGLE_REAUTHORIZATION_REQUIRED");
+    const result = await synchronizeGoogleDrive(connector, async (progress) => {
+        const heartbeat = new Date().toISOString();
+        await db
+          .update(indexingJobs)
+          .set({
+            processedCount: progress.filesProcessed,
+            discoveredCount: progress.filesDiscovered,
+            indexedCount: progress.filesIndexed,
+            unsupportedCount: progress.filesUnsupported,
+            failedCount: progress.filesFailed,
+            structuralCount: progress.structuredFiles,
+            fallbackCount: progress.fallbackFiles,
+            heartbeatAt: heartbeat,
+            updatedAt: heartbeat,
+          })
+          .where(eq(indexingJobs.id, jobId));
+        await db
+          .update(indexingJobAttempts)
+          .set({ heartbeatAt: heartbeat })
+          .where(eq(indexingJobAttempts.id, candidateAttemptId));
+      }),
+      finishedAt = new Date().toISOString(),
+      unsupportedCount = result.filesUnsupported,
+      continuationNeeded =
+        result.continuationNeeded ||
+        result.filesProcessed < result.filesDiscovered,
+      status = continuationNeeded
         ? "queued"
         : result.status === "complete"
           ? "completed"
@@ -185,14 +211,16 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
         fallbackCount: result.fallbackFiles,
         continuationCount: attemptNumber,
         heartbeatAt: finishedAt,
-        completedAt: result.continuationNeeded ? null : finishedAt,
-        terminalReason: result.continuationNeeded
+        completedAt: continuationNeeded ? null : finishedAt,
+        terminalReason: continuationNeeded
           ? null
           : result.status === "complete"
             ? "INVENTORY_COMPLETE"
             : "COMPLETED_WITH_FAILURES",
-        lastErrorCode: result.continuationNeeded
-          ? "SYNC_TIME_BUDGET_REACHED"
+        lastErrorCode: continuationNeeded
+          ? result.continuationNeeded
+            ? "SYNC_TIME_BUDGET_REACHED"
+            : "INDEXING_INVENTORY_UNACCOUNTED"
           : result.status === "partial"
             ? "SYNC_PARTIAL"
             : null,
@@ -202,8 +230,8 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
     await db
       .update(indexingJobAttempts)
       .set({ status: "completed", completedAt: finishedAt, heartbeatAt: finishedAt })
-      .where(eq(indexingJobAttempts.id, attemptId));
-    if (!result.continuationNeeded) {
+      .where(eq(indexingJobAttempts.id, candidateAttemptId));
+    if (!continuationNeeded) {
       await refreshWorkspaceConflicts(claimed.workspaceId, await indexedWorkspaceFiles(claimed.workspaceId));
       await persistCoverageReceipt({
         job: claimed,
@@ -226,9 +254,11 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
         finishedAt,
       });
     }
-    return { jobId, status, continuationNeeded: result.continuationNeeded };
+    return { jobId, status, continuationNeeded };
   } catch (error) {
-    const code = sanitizedErrorCode(error),
+    const code = attemptId
+        ? sanitizedErrorCode(error)
+        : "INDEXING_ATTEMPT_PERSISTENCE_FAILED",
       reauthorization = code.includes("REAUTHORIZATION") || code.includes("INVALID_GRANT");
     await failJob(jobId, attemptId, code, reauthorization);
     return { jobId, status: reauthorization ? "reauthorization_required" : "failed", continuationNeeded: false };
@@ -237,7 +267,7 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
 
 async function failJob(
   jobId: string,
-  attemptId: string,
+  attemptId: string | null,
   errorCode: string,
   reauthorization: boolean,
 ) {
@@ -253,10 +283,11 @@ async function failJob(
       updatedAt: now,
     })
     .where(eq(indexingJobs.id, jobId));
-  await db
-    .update(indexingJobAttempts)
-    .set({ status: "failed", errorCode, completedAt: now, heartbeatAt: now })
-    .where(eq(indexingJobAttempts.id, attemptId));
+  if (attemptId)
+    await db
+      .update(indexingJobAttempts)
+      .set({ status: "failed", errorCode, completedAt: now, heartbeatAt: now })
+      .where(eq(indexingJobAttempts.id, attemptId));
 }
 
 async function persistCoverageReceipt(input: {

@@ -41,6 +41,21 @@ type Dashboard = {
     startedAt: string;
     finishedAt: string | null;
   };
+  indexingJob: null | {
+    id: string;
+    status: string;
+    processedCount: number;
+    discoveredCount: number;
+    indexedCount: number;
+    unsupportedCount: number;
+    failedCount: number;
+    structuralCount: number;
+    fallbackCount: number;
+    lastErrorCode: string | null;
+    heartbeatAt: string | null;
+    completedAt: string | null;
+    updatedAt: string;
+  };
 };
 export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
   const router = useRouter(),
@@ -85,7 +100,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
     void load();
   }, [load]);
   useEffect(() => {
-    if (!data || !["syncing", "token_refreshing"].includes(data.connector?.status ?? "")) return;
+    if (!data || !isActiveJob(data.indexingJob?.status)) return;
     const timer = window.setInterval(() => void load(), 5000);
     return () => window.clearInterval(timer);
   }, [data, load]);
@@ -181,7 +196,12 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
       </section>
     );
   const accessibleFiles = data.files.filter((file) => file.indexStatus === "indexed").length,
-    unavailableFiles = data.latestSync?.filesRemoved ?? 0;
+    unavailableFiles = data.latestSync?.filesRemoved ?? 0,
+    job = data.indexingJob,
+    activeJob = isActiveJob(job?.status),
+    remaining = job?.discoveredCount
+      ? Math.max(0, job.discoveredCount - job.processedCount)
+      : null;
   return (
     <>
       <section className="content-section">
@@ -245,8 +265,8 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
                   {busy ? "Preparing…" : "Reconnect Google Drive"}
                 </button>
               ) : (
-                <button className="button" disabled={busy || data.connector.status === "syncing"} onClick={sync}>
-                  {busy ? busyLabel : data.connector.status === "syncing" ? "Indexing…" : data.latestSync ? "Check for updates" : "Start indexing"}
+                <button className="button" disabled={busy || activeJob} onClick={sync}>
+                  {busy ? busyLabel : activeJob ? "Indexing…" : data.latestSync ? "Check for updates" : "Start indexing"}
                 </button>
               )}
               <button disabled={busy} onClick={disconnect}>
@@ -275,6 +295,21 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
       </section>
       <section className="content-section">
         <h2>3 · Indexing status</h2>
+        {job && (
+          <div className="indexing-progress" role="status" aria-live="polite">
+            <b>{indexingProgressLabel(job)}</b>
+            <p>
+              {remaining === null
+                ? "Discovering the authorized Drive inventory…"
+                : `${remaining} remaining · ${job.indexedCount} indexed · ${job.unsupportedCount} skipped · ${job.failedCount} failed`}
+            </p>
+            {job.discoveredCount > 0 && (
+              <progress value={job.processedCount} max={job.discoveredCount}>
+                {job.processedCount} of {job.discoveredCount}
+              </progress>
+            )}
+          </div>
+        )}
         {data.latestSync ? (
           <div className="trust-grid">
             <article>
@@ -381,4 +416,14 @@ function friendlyConnectorError(code: string) {
   if (code.includes("TIME_BUDGET") || code.includes("PARTIAL")) return "Indexing paused safely. Your saved progress was preserved; choose Check for updates to continue.";
   if (code.includes("TOKEN") || code.includes("AUTH")) return "Your Google permission needs to be renewed. Reconnect Drive to continue safely.";
   return "Some files could not be processed. Searchable files remain available, and you can retry indexing.";
+}
+function isActiveJob(status: string | null | undefined) {
+  return Boolean(status && ["queued", "running", "pausing", "stale"].includes(status));
+}
+function indexingProgressLabel(job: NonNullable<Dashboard["indexingJob"]>) {
+  if (job.status === "completed") return `Indexing complete: ${job.processedCount} of ${job.discoveredCount} files accounted for`;
+  if (["failed", "cancelled", "reauthorization_required"].includes(job.status))
+    return `Indexing stopped after ${job.processedCount} of ${job.discoveredCount || "the discovered"} files`;
+  if (!job.discoveredCount) return "Discovering authorized Drive files";
+  return `Indexing ${job.processedCount} of ${job.discoveredCount} files`;
 }
