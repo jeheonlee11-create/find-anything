@@ -4,8 +4,8 @@ import { getDb } from "@/db";
 import { indexingJobAttempts, indexingJobs } from "@/db/schema";
 import { requireBetaAdmin } from "@/lib/beta/admin";
 
-const APPROVED_JOB_ID = "job_c779bbc4-7a61-4a56-abac-57404b538fbd";
-const APPROVED_WORKSPACE_ID = "ws_b59e5400-46c0-4732-a90c-27af8781ee0a";
+const APPROVED_JOB_ID = "job_11bc13ea-567e-4ef7-b0df-bbcb04b68c39";
+const APPROVED_WORKSPACE_ID = "ws_9b615077-699e-4b36-8849-0e3fe5341edb";
 
 export async function GET(request: Request) {
   const admin = await requireBetaAdmin(request);
