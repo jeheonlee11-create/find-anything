@@ -64,8 +64,8 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
     [busy, setBusy] = useState(false),
     [busyLabel, setBusyLabel] = useState("Working…"),
     [error, setError] = useState("");
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (background = false) => {
+    if (!background) setLoading(true);
     const response = await fetch(
         `/api/workspaces/${encodeURIComponent(workspaceId)}`,
         { cache: "no-store" },
@@ -78,7 +78,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
     if (!response.ok)
       setError(body.error?.message ?? "Workspace could not be loaded.");
     else setData(body);
-    setLoading(false);
+    if (!background) setLoading(false);
   }, [router, workspaceId]);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search),
@@ -101,7 +101,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
   }, [load]);
   useEffect(() => {
     if (!data || !isActiveJob(data.indexingJob?.status)) return;
-    const timer = window.setInterval(() => void load(), 5000);
+    const timer = window.setInterval(() => void load(true), 5000);
     return () => window.clearInterval(timer);
   }, [data, load]);
   async function connect() {
@@ -160,7 +160,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
       )
         break;
     }
-    await load();
+    await load(true);
     setBusy(false);
   }
   async function disconnect() {
