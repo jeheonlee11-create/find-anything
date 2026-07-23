@@ -8,6 +8,7 @@ import {
 import { enqueueIndexingJob } from "@/lib/indexing/jobs";
 import { synchronizeGoogleDrive } from "@/lib/google-drive/sync";
 import { rateLimit, recordBetaEvent } from "@/lib/beta/repository";
+import { logIndexingEvent } from "@/lib/observability/indexing-log";
 
 export async function POST(request: Request) {
   const actor = await requireAuthenticatedUser(request);
@@ -32,6 +33,11 @@ export async function POST(request: Request) {
       { status: 409 },
     );
   try {
+    logIndexingEvent("connector_initialized", {
+      workspaceId,
+      connectorId: connector.id,
+      stage: "connecting",
+    });
     if (process.env.ENABLE_DURABLE_INDEXING_JOBS === "false") {
       const result = await synchronizeGoogleDrive(connector);
       await recordBetaEvent({ actorId: actor.actorId, workspaceId, event: "indexing_completed", properties: { filesIndexed: result.filesIndexed, structuralFiles: result.structuredFiles } });
@@ -45,7 +51,15 @@ export async function POST(request: Request) {
       headers["x-find-anything-job-token"] = job.continuationToken;
     }
     return NextResponse.json(
-      { jobId: job.jobId, status: job.alreadyActive ? "running" : "queued", message: job.alreadyActive ? "Indexing is already in progress." : "Indexing was queued. You may safely close this page." },
+      {
+        jobId: job.jobId,
+        status: job.alreadyActive ? "running" : "queued",
+        resumed: job.resumed,
+        alreadyActive: job.alreadyActive,
+        message: job.alreadyActive
+          ? "Indexing is already in progress."
+          : "Indexing was queued. You may safely close this page.",
+      },
       { status: 202, headers },
     );
   } catch {

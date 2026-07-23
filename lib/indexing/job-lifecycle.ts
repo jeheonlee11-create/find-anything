@@ -19,7 +19,7 @@ export function indexingAccounting(input: {
     ...input,
     remaining: Math.max(0, input.discovered - input.processed),
     fullyAccounted:
-      input.discovered > 0 && input.processed >= input.discovered,
+      input.processed >= input.discovered,
   };
 }
 

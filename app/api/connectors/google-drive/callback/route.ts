@@ -13,6 +13,7 @@ import {
   consumeOAuthState,
   upsertConnector,
 } from "@/lib/google-drive/repository";
+import { logIndexingEvent } from "@/lib/observability/indexing-log";
 export async function GET(request: Request) {
   const actor = await getAuthenticatedActor(request);
   if (!actor) return NextResponse.redirect(new URL("/sign-in", request.url));
@@ -20,13 +21,17 @@ export async function GET(request: Request) {
     code = url.searchParams.get("code"),
     state = url.searchParams.get("state"),
     oauthError = url.searchParams.get("error");
-  if (oauthError)
+  if (oauthError) {
+    logIndexingEvent("oauth_authorization_failed", {
+      errorCode: "GOOGLE_OAUTH_DENIED",
+    });
     return NextResponse.redirect(
       new URL(
         `/app?connector_error=${encodeURIComponent(oauthError)}`,
         request.url,
       ),
     );
+  }
   if (!code || !state)
     return NextResponse.json(
       {
@@ -78,6 +83,11 @@ export async function GET(request: Request) {
       createdAt: now,
       updatedAt: now,
     });
+    logIndexingEvent("oauth_authorization_succeeded", {
+      workspaceId: record.workspaceId,
+      connectorId: `connector_${record.workspaceId}_google_drive`,
+      stage: "connecting",
+    });
     return NextResponse.redirect(
       new URL(
         `/app/workspaces/${encodeURIComponent(record.workspaceId)}?connector=connected`,
@@ -85,6 +95,10 @@ export async function GET(request: Request) {
       ),
     );
   } catch {
+    logIndexingEvent("oauth_authorization_failed", {
+      workspaceId: record.workspaceId,
+      errorCode: "GOOGLE_TOKEN_EXCHANGE_FAILED",
+    });
     return NextResponse.redirect(
       new URL(
         `/app/workspaces/${encodeURIComponent(record.workspaceId)}?connector_error=token_exchange_failed`,

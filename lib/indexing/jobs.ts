@@ -1,4 +1,4 @@
-import { and, eq, inArray, max, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, max, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   connectors,
@@ -10,11 +10,13 @@ import { synchronizeGoogleDrive } from "@/lib/google-drive/sync";
 import { indexedWorkspaceFiles } from "@/lib/workspace-search/repository";
 import { refreshWorkspaceConflicts } from "@/lib/conflicts/repository";
 import { nextIndexingAttemptNumber } from "@/lib/indexing/job-lifecycle";
+import { logIndexingEvent } from "@/lib/observability/indexing-log";
 
 export const INDEXING_VERSION = "literal-v1";
 export const EXTRACTION_VERSION = "structural-v1";
-const resumable = ["queued", "partial", "stale"] as const;
+const resumable = ["queued", "partial", "stale", "failed", "cancelled"] as const;
 const active = ["queued", "running", "pausing", "stale"] as const;
+const retryable = [...active, "partial", "failed", "cancelled"] as const;
 
 export async function enqueueIndexingJob(input: {
   workspaceId: string;
@@ -31,9 +33,10 @@ export async function enqueueIndexingJob(input: {
       .where(
         and(
           eq(indexingJobs.connectorId, input.connectorId),
-          inArray(indexingJobs.status, [...active]),
+          inArray(indexingJobs.status, [...retryable]),
         ),
       )
+      .orderBy(desc(indexingJobs.updatedAt))
       .get();
   if (existing) {
     const heartbeat = existing.heartbeatAt ?? existing.updatedAt,
@@ -45,31 +48,101 @@ export async function enqueueIndexingJob(input: {
         resumed: true,
         alreadyActive: true,
       };
-    await db
-      .update(indexingJobs)
-      .set({
-        status: "queued",
-        continuationTokenHash: tokenHash,
-        retryCount: existing.retryCount + 1,
-        terminalReason: null,
-        lastErrorCode: null,
-        updatedAt: now,
-      })
-      .where(eq(indexingJobs.id, existing.id));
+    await db.batch([
+      db
+        .update(indexingJobAttempts)
+        .set({
+          status: "interrupted",
+          completedAt: now,
+          heartbeatAt: now,
+          errorCode: "STALE_HEARTBEAT",
+        })
+        .where(
+          and(
+            eq(indexingJobAttempts.jobId, existing.id),
+            eq(indexingJobAttempts.status, "running"),
+          ),
+        ),
+      db
+        .update(indexingJobs)
+        .set({
+          status: "queued",
+          stage: "connecting",
+          continuationTokenHash: tokenHash,
+          retryCount: existing.retryCount + 1,
+          terminalReason: null,
+          lastErrorCode: null,
+          heartbeatAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(indexingJobs.id, existing.id),
+            eq(indexingJobs.updatedAt, existing.updatedAt),
+          ),
+        ),
+    ]);
+    const recovered = await db
+      .select({ id: indexingJobs.id })
+      .from(indexingJobs)
+      .where(
+        and(
+          eq(indexingJobs.id, existing.id),
+          eq(indexingJobs.continuationTokenHash, tokenHash),
+          eq(indexingJobs.status, "queued"),
+        ),
+      )
+      .get();
+    if (!recovered)
+      return {
+        jobId: existing.id,
+        continuationToken: null,
+        resumed: true,
+        alreadyActive: true,
+      };
+    logIndexingEvent("stale_job_recovered", {
+      workspaceId: existing.workspaceId,
+      connectorId: existing.connectorId,
+      jobId: existing.id,
+      stage: "connecting",
+    });
     return { jobId: existing.id, continuationToken: token, resumed: true, alreadyActive: false };
   }
   const jobId = `job_${crypto.randomUUID()}`;
-  await db.insert(indexingJobs).values({
-    id: jobId,
-    workspaceId: input.workspaceId,
-    connectorId: input.connectorId,
-    requestedByUserId: input.actorId,
-    status: "queued",
-    continuationTokenHash: tokenHash,
-    deploymentVersion: process.env.APP_VERSION ?? "unknown",
-    createdAt: now,
-    updatedAt: now,
-  });
+  try {
+    await db.insert(indexingJobs).values({
+      id: jobId,
+      workspaceId: input.workspaceId,
+      connectorId: input.connectorId,
+      requestedByUserId: input.actorId,
+      status: "queued",
+      stage: "connecting",
+      discoveryStatus: "not_started",
+      continuationTokenHash: tokenHash,
+      deploymentVersion: process.env.APP_VERSION ?? "unknown",
+      createdAt: now,
+      updatedAt: now,
+    });
+  } catch (error) {
+    const winner = await db
+      .select({ id: indexingJobs.id })
+      .from(indexingJobs)
+      .where(
+        and(
+          eq(indexingJobs.connectorId, input.connectorId),
+          inArray(indexingJobs.status, [...active]),
+        ),
+      )
+      .get();
+    if (winner)
+      return {
+        jobId: winner.id,
+        continuationToken: null,
+        resumed: true,
+        alreadyActive: true,
+      };
+    throw error;
+  }
   return { jobId, continuationToken: token, resumed: false, alreadyActive: false };
 }
 
@@ -84,10 +157,14 @@ export async function indexingJobForWorkspace(
       workspaceId: indexingJobs.workspaceId,
       connectorId: indexingJobs.connectorId,
       status: indexingJobs.status,
+      stage: indexingJobs.stage,
+      discoveryStatus: indexingJobs.discoveryStatus,
       processedCount: indexingJobs.processedCount,
       discoveredCount: indexingJobs.discoveredCount,
       indexedCount: indexingJobs.indexedCount,
       unsupportedCount: indexingJobs.unsupportedCount,
+      skippedCount: indexingJobs.skippedCount,
+      inaccessibleCount: indexingJobs.inaccessibleCount,
       failedCount: indexingJobs.failedCount,
       structuralCount: indexingJobs.structuralCount,
       fallbackCount: indexingJobs.fallbackCount,
@@ -119,6 +196,7 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
       .update(indexingJobs)
       .set({
         status: "running",
+        stage: "connecting",
         startedAt: sql`coalesce(${indexingJobs.startedAt}, ${now})`,
         heartbeatAt: now,
         updatedAt: now,
@@ -145,15 +223,23 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
         persistedAttempt?.value,
       ),
       candidateAttemptId = `attempt_${jobId}_${attemptNumber}`;
-    await db.insert(indexingJobAttempts).values({
+    const insertedAttempt = await db.insert(indexingJobAttempts).values({
       id: candidateAttemptId,
       jobId,
       attemptNumber,
       status: "running",
       startedAt: now,
       heartbeatAt: now,
-    });
+    }).onConflictDoNothing().returning({ id: indexingJobAttempts.id }).get();
+    if (!insertedAttempt) throw new Error("INDEXING_ATTEMPT_PERSISTENCE_COLLISION");
     attemptId = candidateAttemptId;
+    logIndexingEvent("attempt_created", {
+      workspaceId: claimed.workspaceId,
+      connectorId: claimed.connectorId,
+      jobId,
+      attemptNumber,
+      stage: "connecting",
+    });
     const connector = await db
       .select()
       .from(connectors)
@@ -172,10 +258,14 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
         await db
           .update(indexingJobs)
           .set({
+            stage: progress.stage,
+            discoveryStatus: progress.discoveryStatus,
             processedCount: progress.filesProcessed,
             discoveredCount: progress.filesDiscovered,
             indexedCount: progress.filesIndexed,
             unsupportedCount: progress.filesUnsupported,
+            skippedCount: progress.filesUnsupported,
+            inaccessibleCount: progress.filesInaccessible,
             failedCount: progress.filesFailed,
             structuralCount: progress.structuredFiles,
             fallbackCount: progress.fallbackFiles,
@@ -187,6 +277,17 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
           .update(indexingJobAttempts)
           .set({ heartbeatAt: heartbeat })
           .where(eq(indexingJobAttempts.id, candidateAttemptId));
+        logIndexingEvent("heartbeat_updated", {
+          workspaceId: claimed.workspaceId,
+          connectorId: claimed.connectorId,
+          jobId,
+          discoveredCount: progress.filesDiscovered,
+          processedCount: progress.filesProcessed,
+          indexedCount: progress.filesIndexed,
+          skippedCount: progress.filesUnsupported,
+          failedCount: progress.filesFailed,
+          stage: progress.stage,
+        });
       }),
       finishedAt = new Date().toISOString(),
       unsupportedCount = result.filesUnsupported,
@@ -202,10 +303,18 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
       .update(indexingJobs)
       .set({
         status,
+        stage: continuationNeeded
+          ? "indexing"
+          : status === "completed"
+            ? "completed"
+            : "failed",
+        discoveryStatus: result.paginationComplete ? "complete" : "failed",
         processedCount: result.filesProcessed,
         discoveredCount: result.filesDiscovered,
         indexedCount: result.filesIndexed,
         unsupportedCount,
+        skippedCount: unsupportedCount,
+        inaccessibleCount: result.filesRemoved,
         failedCount: result.filesFailed,
         structuralCount: result.structuredFiles,
         fallbackCount: result.fallbackFiles,
@@ -253,6 +362,17 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
         },
         finishedAt,
       });
+      logIndexingEvent("job_completed", {
+        workspaceId: claimed.workspaceId,
+        connectorId: claimed.connectorId,
+        jobId,
+        discoveredCount: result.filesDiscovered,
+        processedCount: result.filesProcessed,
+        indexedCount: result.filesIndexed,
+        skippedCount: unsupportedCount,
+        failedCount: result.filesFailed,
+        stage: status === "completed" ? "completed" : "failed",
+      });
     }
     return { jobId, status, continuationNeeded };
   } catch (error) {
@@ -276,6 +396,8 @@ async function failJob(
     .update(indexingJobs)
     .set({
       status: reauthorization ? "reauthorization_required" : "failed",
+      stage: "failed",
+      discoveryStatus: sql`case when ${indexingJobs.discoveryStatus} = 'complete' then 'complete' else 'failed' end`,
       lastErrorCode: errorCode,
       terminalReason: errorCode,
       completedAt: now,
@@ -288,6 +410,11 @@ async function failJob(
       .update(indexingJobAttempts)
       .set({ status: "failed", errorCode, completedAt: now, heartbeatAt: now })
       .where(eq(indexingJobAttempts.id, attemptId));
+  logIndexingEvent("job_failed", {
+    jobId,
+    errorCode,
+    stage: "failed",
+  });
 }
 
 async function persistCoverageReceipt(input: {

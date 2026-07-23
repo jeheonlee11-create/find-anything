@@ -25,6 +25,11 @@ import {
   planSyncContinuation,
   terminalSyncStatus,
 } from "./sync-lifecycle";
+import type {
+  DiscoveryStatus,
+  IndexingStage,
+} from "@/lib/indexing/state-machine";
+import { logIndexingEvent } from "@/lib/observability/indexing-log";
 export interface StoredConnector {
   id: string;
   workspaceId: string;
@@ -37,10 +42,13 @@ const SYNC_BATCH_SIZE = 4;
 const UNSUPPORTED_BATCH_SIZE = 20;
 const refreshesInFlight = new Map<string, Promise<string>>();
 export type DriveSyncProgress = {
+  stage: IndexingStage;
+  discoveryStatus: DiscoveryStatus;
   filesDiscovered: number;
   filesProcessed: number;
   filesIndexed: number;
   filesUnsupported: number;
+  filesInaccessible: number;
   filesFailed: number;
   structuredFiles: number;
   fallbackFiles: number;
@@ -142,7 +150,38 @@ export async function synchronizeGoogleDrive(
   const fallbackReasons: Record<string, number> = {};
   await setConnectorStatus(connector.id, "syncing");
   try {
+    await reportProgress(onProgress, {
+      stage: "verifying_authorization",
+      discoveryStatus: "not_started",
+      filesDiscovered: 0,
+      filesProcessed: 0,
+      filesIndexed: 0,
+      filesUnsupported: 0,
+      filesInaccessible: 0,
+      filesFailed: 0,
+      structuredFiles: 0,
+      fallbackFiles: 0,
+      paginationComplete: false,
+    });
     const accessToken = await usableAccessToken(connector);
+    logIndexingEvent("discovery_started", {
+      workspaceId: connector.workspaceId,
+      connectorId: connector.id,
+      stage: "discovering",
+    });
+    await reportProgress(onProgress, {
+      stage: "discovering",
+      discoveryStatus: "running",
+      filesDiscovered: 0,
+      filesProcessed: 0,
+      filesIndexed: 0,
+      filesUnsupported: 0,
+      filesInaccessible: 0,
+      filesFailed: 0,
+      structuredFiles: 0,
+      fallbackFiles: 0,
+      paginationComplete: false,
+    });
     const inventory = await listAllDriveFiles(accessToken, async (progress) => {
       discovered = progress.filesDiscovered;
       paginationComplete = progress.paginationComplete;
@@ -155,9 +194,36 @@ export async function synchronizeGoogleDrive(
         paginationComplete: progress.paginationComplete,
         nextPageToken: progress.nextPageToken,
       });
+      await reportProgress(onProgress, {
+        stage: progress.paginationComplete
+          ? "discovery_complete"
+          : "discovering",
+        discoveryStatus: progress.paginationComplete ? "complete" : "running",
+        filesDiscovered: discovered,
+        filesProcessed,
+        filesIndexed: indexed,
+        filesUnsupported,
+        filesInaccessible: filesRemoved,
+        filesFailed: failed,
+        structuredFiles,
+        fallbackFiles,
+        paginationComplete: progress.paginationComplete,
+      });
+      logIndexingEvent("discovery_progress", {
+        workspaceId: connector.workspaceId,
+        connectorId: connector.id,
+        discoveredCount: discovered,
+        stage: "discovering",
+      });
     });
     if (inventory.incompleteSearch) throw new Error("GOOGLE_INCOMPLETE_SEARCH");
     discovered = inventory.files.length;
+    logIndexingEvent("discovery_completed", {
+      workspaceId: connector.workspaceId,
+      connectorId: connector.id,
+      discoveredCount: discovered,
+      stage: "discovery_complete",
+    });
     const previousFiles = await existingSourceFiles(connector.id),
       continuation = planSyncContinuation(inventory.files, previousFiles),
       { previousBySourceId, pendingFiles } = continuation,
@@ -186,10 +252,13 @@ export async function synchronizeGoogleDrive(
     });
     filesUnsupported = continuation.filesUnsupported;
     await reportProgress(onProgress, {
+      stage: "indexing",
+      discoveryStatus: "complete",
       filesDiscovered: discovered,
       filesProcessed,
       filesIndexed: indexed,
       filesUnsupported,
+      filesInaccessible: filesRemoved,
       filesFailed: failed,
       structuredFiles,
       fallbackFiles,
@@ -235,10 +304,13 @@ export async function synchronizeGoogleDrive(
         nextPageToken: null,
       });
       await reportProgress(onProgress, {
+        stage: "indexing",
+        discoveryStatus: "complete",
         filesDiscovered: discovered,
         filesProcessed,
         filesIndexed: indexed,
         filesUnsupported,
+        filesInaccessible: filesRemoved,
         filesFailed: failed,
         structuredFiles,
         fallbackFiles,
@@ -350,10 +422,13 @@ export async function synchronizeGoogleDrive(
         nextPageToken: null,
       });
       await reportProgress(onProgress, {
+        stage: "indexing",
+        discoveryStatus: "complete",
         filesDiscovered: discovered,
         filesProcessed,
         filesIndexed: indexed,
         filesUnsupported,
+        filesInaccessible: filesRemoved,
         filesFailed: failed,
         structuredFiles,
         fallbackFiles,
