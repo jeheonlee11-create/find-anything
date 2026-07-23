@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { runIndexingJob } from "@/lib/indexing/jobs";
+import { logIndexingEvent } from "@/lib/observability/indexing-log";
 
 export async function POST(request: Request) {
   const jobId = request.headers.get("x-find-anything-job-id") ?? "",
     token = request.headers.get("x-find-anything-job-token") ?? "";
   if (!jobId || !token)
     return NextResponse.json({ error: { code: "NOT_FOUND", message: "Not found." } }, { status: 404 });
+  logIndexingEvent("worker_started", { jobId, stage: "connecting" });
   const result = await runIndexingJob(jobId, token);
   if (!result)
     return NextResponse.json({ error: { code: "NOT_FOUND", message: "Not found." } }, { status: 404 });

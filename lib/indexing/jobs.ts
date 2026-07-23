@@ -48,6 +48,12 @@ export async function enqueueIndexingJob(input: {
         resumed: true,
         alreadyActive: true,
       };
+    logIndexingEvent("recovery_requested", {
+      workspaceId: existing.workspaceId,
+      connectorId: existing.connectorId,
+      jobId: existing.id,
+      stage: existing.stage,
+    });
     await db.batch([
       db
         .update(indexingJobAttempts)
@@ -144,6 +150,62 @@ export async function enqueueIndexingJob(input: {
     throw error;
   }
   return { jobId, continuationToken: token, resumed: false, alreadyActive: false };
+}
+
+export async function failIndexingJobScheduling(
+  jobId: string,
+  continuationToken: string,
+) {
+  const db = await getDb(),
+    tokenHash = await sha256(continuationToken),
+    now = new Date().toISOString(),
+    failed = await db
+      .update(indexingJobs)
+      .set({
+        status: "failed",
+        stage: "failed",
+        discoveryStatus: sql`case when ${indexingJobs.discoveryStatus} = 'complete' then 'complete' else 'failed' end`,
+        lastErrorCode: "CONTINUATION_SCHEDULING_FAILED",
+        terminalReason: "CONTINUATION_SCHEDULING_FAILED",
+        completedAt: now,
+        heartbeatAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(indexingJobs.id, jobId),
+          eq(indexingJobs.continuationTokenHash, tokenHash),
+          inArray(indexingJobs.status, ["queued", "running", "stale"]),
+        ),
+      )
+      .returning({
+        workspaceId: indexingJobs.workspaceId,
+        connectorId: indexingJobs.connectorId,
+      })
+      .get();
+  if (!failed) return false;
+  await db
+    .update(indexingJobAttempts)
+    .set({
+      status: "failed",
+      completedAt: now,
+      heartbeatAt: now,
+      errorCode: "CONTINUATION_SCHEDULING_FAILED",
+    })
+    .where(
+      and(
+        eq(indexingJobAttempts.jobId, jobId),
+        eq(indexingJobAttempts.status, "running"),
+      ),
+    );
+  logIndexingEvent("scheduling_failure", {
+    workspaceId: failed.workspaceId,
+    connectorId: failed.connectorId,
+    jobId,
+    errorCode: "CONTINUATION_SCHEDULING_FAILED",
+    stage: "failed",
+  });
+  return true;
 }
 
 export async function indexingJobForWorkspace(

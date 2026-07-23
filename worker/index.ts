@@ -1,6 +1,8 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { logIndexingEvent } from "../lib/observability/indexing-log";
+import { executeIndexingContinuation } from "./indexing-continuation";
 
 interface Env {
   ASSETS: Fetcher;
@@ -44,7 +46,15 @@ const worker = {
       jobId = response.headers.get("x-find-anything-job-id"),
       jobToken = response.headers.get("x-find-anything-job-token");
     if (jobId && jobToken) {
-      ctx.waitUntil(dispatchInternalContinuation(request.url, jobId, jobToken));
+      logIndexingEvent("continuation_scheduled", {
+        jobId,
+        stage: "connecting",
+      });
+      ctx.waitUntil(
+        runInternalContinuation(request.url, jobId, jobToken, env, ctx).catch(
+          () => markSchedulingFailure(request.url, jobId, jobToken, env, ctx),
+        ),
+      );
       const headers = new Headers(response.headers);
       headers.delete("x-find-anything-job-id");
       headers.delete("x-find-anything-job-token");
@@ -58,23 +68,55 @@ const worker = {
   },
 };
 
-async function dispatchInternalContinuation(
+async function runInternalContinuation(
   requestUrl: string,
   jobId: string,
   jobToken: string,
+  env: Env,
+  ctx: ExecutionContext,
 ) {
-  const continuationUrl = new URL("/api/internal/indexing/continue", requestUrl);
-  // Give each bounded batch its own Worker request lifetime. The continuation
-  // response is intercepted by the Worker and dispatches the following batch.
-  const response = await fetch(
-    new Request(continuationUrl, {
-      method: "POST",
-      headers: {
-        "x-find-anything-job-id": jobId,
-        "x-find-anything-job-token": jobToken,
-      },
-    }),
-  );
+  const continuationUrl = new URL("/api/internal/indexing/continue", requestUrl),
+    continuationRequest = () =>
+      new Request(continuationUrl, {
+        method: "POST",
+        headers: {
+          "x-find-anything-job-id": jobId,
+          "x-find-anything-job-token": jobToken,
+        },
+      });
+  await executeIndexingContinuation({
+    jobId,
+    jobToken,
+    startWorker: () => handler.fetch(continuationRequest(), env, ctx),
+    // Later bounded batches receive a fresh request lifetime. If the platform
+    // cannot schedule that request, the caller records an honest terminal
+    // state instead of leaving the job looking active forever.
+    scheduleNext: () => fetch(continuationRequest()),
+  });
+}
+
+async function markSchedulingFailure(
+  requestUrl: string,
+  jobId: string,
+  jobToken: string,
+  env: Env,
+  ctx: ExecutionContext,
+) {
+  const failureUrl = new URL(
+      "/api/internal/indexing/scheduling-failure",
+      requestUrl,
+    ),
+    response = await handler.fetch(
+      new Request(failureUrl, {
+        method: "POST",
+        headers: {
+          "x-find-anything-job-id": jobId,
+          "x-find-anything-job-token": jobToken,
+        },
+      }),
+      env,
+      ctx,
+    );
   await response.arrayBuffer();
 }
 

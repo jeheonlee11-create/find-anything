@@ -367,7 +367,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
               </div>
             </article>
           </div>
-        ) : (
+        ) : activeJob ? null : (
           <div className="empty-state"><b>Ready to build your searchable index</b><p>Start indexing above. You can leave this page and come back—saved progress is preserved.</p></div>
         )}
       </section>
