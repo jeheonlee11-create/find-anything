@@ -609,6 +609,39 @@ export const indexingJobAttempts = sqliteTable(
   }),
 );
 
+export const indexingContinuations = sqliteTable(
+  "indexing_continuations",
+  {
+    id: text("id").primaryKey(),
+    jobId: text("job_id").notNull(),
+    sequence: integer("sequence").notNull(),
+    status: text("status", {
+      enum: [
+        "persisted",
+        "dispatched",
+        "acknowledged",
+        "worker_started",
+        "completed",
+        "failed",
+      ],
+    }).notNull(),
+    persistedAt: text("persisted_at").notNull(),
+    dispatchedAt: text("dispatched_at"),
+    acknowledgedAt: text("acknowledged_at"),
+    workerStartedAt: text("worker_started_at"),
+    completedAt: text("completed_at"),
+    failedAt: text("failed_at"),
+    errorCode: text("error_code"),
+  },
+  (t) => ({
+    jobSequenceIdx: uniqueIndex("indexing_continuations_job_sequence_idx").on(
+      t.jobId,
+      t.sequence,
+    ),
+    statusIdx: index("indexing_continuations_status_idx").on(t.status),
+  }),
+);
+
 export const indexingFailures = sqliteTable(
   "indexing_failures",
   {

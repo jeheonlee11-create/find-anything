@@ -49,6 +49,7 @@ export async function POST(request: Request) {
     if (job.continuationToken) {
       headers["x-find-anything-job-id"] = job.jobId;
       headers["x-find-anything-job-token"] = job.continuationToken;
+      headers["x-find-anything-continuation-id"] = job.continuationId;
     }
     return NextResponse.json(
       {

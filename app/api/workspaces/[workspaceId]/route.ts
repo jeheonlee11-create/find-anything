@@ -35,6 +35,7 @@ export async function GET(
       if (resumed.continuationToken) {
         headers["x-find-anything-job-id"] = resumed.jobId;
         headers["x-find-anything-job-token"] = resumed.continuationToken;
+        headers["x-find-anything-continuation-id"] = resumed.continuationId;
       }
     }
     return NextResponse.json(dashboard, { headers });

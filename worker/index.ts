@@ -44,20 +44,39 @@ const worker = {
 
     const response = await handler.fetch(request, env, ctx),
       jobId = response.headers.get("x-find-anything-job-id"),
-      jobToken = response.headers.get("x-find-anything-job-token");
-    if (jobId && jobToken) {
+      jobToken = response.headers.get("x-find-anything-job-token"),
+      continuationId = response.headers.get(
+        "x-find-anything-continuation-id",
+      );
+    if (jobId && jobToken && continuationId) {
       logIndexingEvent("continuation_scheduled", {
         jobId,
         stage: "connecting",
       });
       ctx.waitUntil(
-        runInternalContinuation(request.url, jobId, jobToken, env, ctx).catch(
-          () => markSchedulingFailure(request.url, jobId, jobToken, env, ctx),
+        runInternalContinuation(
+          request.url,
+          jobId,
+          jobToken,
+          continuationId,
+          env,
+          ctx,
+        ).catch(
+          () =>
+            markSchedulingFailure(
+              request.url,
+              jobId,
+              jobToken,
+              continuationId,
+              env,
+              ctx,
+            ),
         ),
       );
       const headers = new Headers(response.headers);
       headers.delete("x-find-anything-job-id");
       headers.delete("x-find-anything-job-token");
+      headers.delete("x-find-anything-continuation-id");
       return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
@@ -72,26 +91,38 @@ async function runInternalContinuation(
   requestUrl: string,
   jobId: string,
   jobToken: string,
+  continuationId: string,
   env: Env,
   ctx: ExecutionContext,
 ) {
-  const continuationUrl = new URL("/api/internal/indexing/continue", requestUrl),
+  const dispatchUrl = new URL("/api/internal/indexing/dispatch", requestUrl),
+    continuationUrl = new URL("/api/internal/indexing/continue", requestUrl),
+    internalHeaders = {
+      "x-find-anything-job-id": jobId,
+      "x-find-anything-job-token": jobToken,
+      "x-find-anything-continuation-id": continuationId,
+    },
     continuationRequest = () =>
       new Request(continuationUrl, {
         method: "POST",
-        headers: {
-          "x-find-anything-job-id": jobId,
-          "x-find-anything-job-token": jobToken,
-        },
+        headers: internalHeaders,
       });
   await executeIndexingContinuation({
     jobId,
-    jobToken,
-    startWorker: () => handler.fetch(continuationRequest(), env, ctx),
-    // Later bounded batches receive a fresh request lifetime. If the platform
-    // cannot schedule that request, the caller records an honest terminal
-    // state instead of leaving the job looking active forever.
-    scheduleNext: () => fetch(continuationRequest()),
+    continuationId,
+    persistDispatch: () =>
+      handler.fetch(
+        new Request(dispatchUrl, {
+          method: "POST",
+          headers: internalHeaders,
+        }),
+        env,
+        ctx,
+      ),
+    // The outbox row is committed before this immediate self-request. A
+    // platform-managed drainer is still required to recover the narrow window
+    // where this execution ends after persistence but before the fetch begins.
+    startFreshWorker: () => fetch(continuationRequest()),
   });
 }
 
@@ -99,6 +130,7 @@ async function markSchedulingFailure(
   requestUrl: string,
   jobId: string,
   jobToken: string,
+  continuationId: string,
   env: Env,
   ctx: ExecutionContext,
 ) {
@@ -112,6 +144,7 @@ async function markSchedulingFailure(
         headers: {
           "x-find-anything-job-id": jobId,
           "x-find-anything-job-token": jobToken,
+          "x-find-anything-continuation-id": continuationId,
         },
       }),
       env,

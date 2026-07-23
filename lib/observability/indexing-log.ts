@@ -8,6 +8,12 @@ type IndexingEvent =
   | "recovery_requested"
   | "attempt_created"
   | "continuation_scheduled"
+  | "continuation_persisted"
+  | "continuation_dispatched"
+  | "continuation_acknowledged"
+  | "continuation_worker_started"
+  | "continuation_completed"
+  | "continuation_failed"
   | "worker_started"
   | "scheduling_failure"
   | "heartbeat_updated"
@@ -19,6 +25,7 @@ type SafeFields = {
   workspaceId?: string;
   connectorId?: string;
   jobId?: string;
+  continuationId?: string;
   attemptNumber?: number;
   discoveredCount?: number;
   processedCount?: number;

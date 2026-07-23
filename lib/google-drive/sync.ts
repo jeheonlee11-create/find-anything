@@ -131,9 +131,9 @@ async function waitForConcurrentRefresh(connectorId: string) {
 export async function synchronizeGoogleDrive(
   connector: StoredConnector,
   onProgress?: (progress: DriveSyncProgress) => Promise<void>,
+  options: { discoveryOnly?: boolean } = {},
 ) {
-  const requestStartedAt = Date.now(),
-    runId = await beginSync(connector.id, true);
+  const runId = await beginSync(connector.id, true);
   let discovered = 0,
     indexed = 0,
     failed = 0,
@@ -233,7 +233,7 @@ export async function synchronizeGoogleDrive(
       extractableFiles = pendingFiles.filter((file) =>
         isExtractableDriveMimeType(file.mimeType),
       ),
-      processingDeadline = requestStartedAt + SYNC_TOTAL_BUDGET_MS;
+      processingDeadline = Date.now() + SYNC_TOTAL_BUDGET_MS;
     filesProcessed = continuation.filesProcessed;
     filesUnchanged = continuation.filesUnchanged;
     indexed = continuation.filesIndexed;
@@ -264,6 +264,47 @@ export async function synchronizeGoogleDrive(
       fallbackFiles,
       paginationComplete: true,
     });
+    if (options.discoveryOnly) {
+      await finishSync(runId, {
+        status: "partial",
+        filesDiscovered: discovered,
+        filesIndexed: indexed,
+        filesFailed: failed,
+        structuredFiles,
+        fallbackFiles,
+        fallbackReasonsJson: JSON.stringify(fallbackReasons),
+        filesAdded,
+        filesUpdated,
+        filesUnchanged,
+        filesRemoved: 0,
+        paginationComplete: true,
+        errorCode: "DISCOVERY_CHECKPOINT_COMPLETE",
+      });
+      await setConnectorStatus(
+        connector.id,
+        "connected",
+        "DISCOVERY_CHECKPOINT_COMPLETE",
+      );
+      return {
+        status: "partial" as const,
+        runId,
+        filesDiscovered: discovered,
+        filesIndexed: indexed,
+        filesFailed: failed,
+        structuredFiles,
+        fallbackFiles,
+        fallbackReasons,
+        filesAdded,
+        filesUpdated,
+        filesUnchanged,
+        filesRemoved: 0,
+        paginationComplete: true,
+        filesProcessed,
+        filesUnsupported,
+        filesDeferred: Math.max(0, discovered - filesProcessed),
+        continuationNeeded: true,
+      };
+    }
     for (
       let offset = 0;
       offset < unsupportedFiles.length;

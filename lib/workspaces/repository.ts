@@ -2,6 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   connectors,
+  indexingContinuations,
   indexingJobs,
   memberships,
   sourceFiles,
@@ -151,7 +152,7 @@ export async function workspaceDashboard(actorId: string, workspaceId: string) {
           .limit(1)
           .then((rows) => rows[0] ?? null)
       : null;
-  const indexingJob = connector
+  const indexingJobBase = connector
     ? await db
         .select({
           id: indexingJobs.id,
@@ -178,6 +179,21 @@ export async function workspaceDashboard(actorId: string, workspaceId: string) {
         .orderBy(desc(indexingJobs.updatedAt))
         .limit(1)
         .then((rows) => rows[0] ?? null)
+    : null;
+  const continuation = indexingJobBase
+    ? await db
+        .select({ status: indexingContinuations.status })
+        .from(indexingContinuations)
+        .where(eq(indexingContinuations.jobId, indexingJobBase.id))
+        .orderBy(desc(indexingContinuations.sequence))
+        .limit(1)
+        .then((rows) => rows[0] ?? null)
+    : null;
+  const indexingJob = indexingJobBase
+    ? {
+        ...indexingJobBase,
+        continuationStatus: continuation?.status ?? null,
+      }
     : null;
   return { workspace, demoMode, connector: connector?{...connector,scopeVerified:demoMode||new Set(connector.grantedScopes.split(/\s+/)).has("https://www.googleapis.com/auth/drive.readonly" )}:null, files, latestSync, indexingJob };
 }

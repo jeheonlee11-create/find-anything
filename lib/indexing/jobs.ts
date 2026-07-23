@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import {
   connectors,
   coverageReceipts,
+  indexingContinuations,
   indexingJobAttempts,
   indexingJobs,
 } from "@/db/schema";
@@ -54,6 +55,20 @@ export async function enqueueIndexingJob(input: {
       jobId: existing.id,
       stage: existing.stage,
     });
+    const persistedContinuation = await db
+        .select({ value: max(indexingContinuations.sequence) })
+        .from(indexingContinuations)
+        .where(eq(indexingContinuations.jobId, existing.id))
+        .get(),
+      continuationSequence =
+        Math.max(
+          existing.continuationCount,
+          persistedContinuation?.value ?? 0,
+        ) + 1,
+      continuationId = continuationDispatchId(
+        existing.id,
+        continuationSequence,
+      );
     await db.batch([
       db
         .update(indexingJobAttempts)
@@ -87,6 +102,16 @@ export async function enqueueIndexingJob(input: {
             eq(indexingJobs.updatedAt, existing.updatedAt),
           ),
         ),
+      db
+        .insert(indexingContinuations)
+        .values({
+          id: continuationId,
+          jobId: existing.id,
+          sequence: continuationSequence,
+          status: "persisted",
+          persistedAt: now,
+        })
+        .onConflictDoNothing(),
     ]);
     const recovered = await db
       .select({ id: indexingJobs.id })
@@ -112,23 +137,46 @@ export async function enqueueIndexingJob(input: {
       jobId: existing.id,
       stage: "connecting",
     });
-    return { jobId: existing.id, continuationToken: token, resumed: true, alreadyActive: false };
+    logIndexingEvent("continuation_persisted", {
+      workspaceId: existing.workspaceId,
+      connectorId: existing.connectorId,
+      jobId: existing.id,
+      continuationId,
+      stage: "connecting",
+    });
+    return {
+      jobId: existing.id,
+      continuationToken: token,
+      continuationId,
+      resumed: true,
+      alreadyActive: false,
+    };
   }
   const jobId = `job_${crypto.randomUUID()}`;
+  const continuationId = continuationDispatchId(jobId, 1);
   try {
-    await db.insert(indexingJobs).values({
-      id: jobId,
-      workspaceId: input.workspaceId,
-      connectorId: input.connectorId,
-      requestedByUserId: input.actorId,
-      status: "queued",
-      stage: "connecting",
-      discoveryStatus: "not_started",
-      continuationTokenHash: tokenHash,
-      deploymentVersion: process.env.APP_VERSION ?? "unknown",
-      createdAt: now,
-      updatedAt: now,
-    });
+    await db.batch([
+      db.insert(indexingJobs).values({
+        id: jobId,
+        workspaceId: input.workspaceId,
+        connectorId: input.connectorId,
+        requestedByUserId: input.actorId,
+        status: "queued",
+        stage: "connecting",
+        discoveryStatus: "not_started",
+        continuationTokenHash: tokenHash,
+        deploymentVersion: process.env.APP_VERSION ?? "unknown",
+        createdAt: now,
+        updatedAt: now,
+      }),
+      db.insert(indexingContinuations).values({
+        id: continuationId,
+        jobId,
+        sequence: 1,
+        status: "persisted",
+        persistedAt: now,
+      }),
+    ]);
   } catch (error) {
     const winner = await db
       .select({ id: indexingJobs.id })
@@ -149,7 +197,121 @@ export async function enqueueIndexingJob(input: {
       };
     throw error;
   }
-  return { jobId, continuationToken: token, resumed: false, alreadyActive: false };
+  logIndexingEvent("continuation_persisted", {
+    workspaceId: input.workspaceId,
+    connectorId: input.connectorId,
+    jobId,
+    continuationId,
+    stage: "connecting",
+  });
+  return {
+    jobId,
+    continuationToken: token,
+    continuationId,
+    resumed: false,
+    alreadyActive: false,
+  };
+}
+
+export async function markContinuationDispatched(
+  jobId: string,
+  continuationToken: string,
+  continuationId: string,
+) {
+  if (!(await continuationTokenMatches(jobId, continuationToken))) return false;
+  return transitionContinuation(jobId, continuationId, "persisted", {
+    status: "dispatched",
+    dispatchedAt: new Date().toISOString(),
+  }, "continuation_dispatched");
+}
+
+export async function acknowledgeContinuation(
+  jobId: string,
+  continuationToken: string,
+  continuationId: string,
+) {
+  if (!(await continuationTokenMatches(jobId, continuationToken))) return false;
+  const now = new Date().toISOString();
+  return transitionContinuation(jobId, continuationId, "dispatched", {
+    status: "acknowledged",
+    acknowledgedAt: now,
+  }, "continuation_acknowledged");
+}
+
+async function continuationTokenMatches(jobId: string, token: string) {
+  const db = await getDb(), tokenHash = await sha256(token);
+  const row = await db
+    .select({ id: indexingJobs.id })
+    .from(indexingJobs)
+    .where(
+      and(
+        eq(indexingJobs.id, jobId),
+        eq(indexingJobs.continuationTokenHash, tokenHash),
+      ),
+    )
+    .get();
+  return Boolean(row);
+}
+
+export async function markContinuationWorkerStarted(
+  jobId: string,
+  continuationId: string,
+) {
+  const now = new Date().toISOString();
+  return transitionContinuation(jobId, continuationId, "acknowledged", {
+    status: "worker_started",
+    workerStartedAt: now,
+  }, "continuation_worker_started");
+}
+
+export async function failContinuation(
+  jobId: string,
+  continuationId: string,
+  errorCode = "CONTINUATION_SCHEDULING_FAILED",
+) {
+  const db = await getDb(), now = new Date().toISOString();
+  await db
+    .update(indexingContinuations)
+    .set({ status: "failed", failedAt: now, errorCode })
+    .where(
+      and(
+        eq(indexingContinuations.id, continuationId),
+        eq(indexingContinuations.jobId, jobId),
+        inArray(indexingContinuations.status, [
+          "persisted",
+          "dispatched",
+          "acknowledged",
+        ]),
+      ),
+    );
+  logIndexingEvent("continuation_failed", { jobId, continuationId, errorCode });
+}
+
+async function transitionContinuation(
+  jobId: string,
+  continuationId: string,
+  expectedStatus: "persisted" | "dispatched" | "acknowledged",
+  values: Partial<typeof indexingContinuations.$inferInsert>,
+  event:
+    | "continuation_dispatched"
+    | "continuation_acknowledged"
+    | "continuation_worker_started",
+) {
+  const db = await getDb();
+  const row = await db
+    .update(indexingContinuations)
+    .set(values)
+    .where(
+      and(
+        eq(indexingContinuations.id, continuationId),
+        eq(indexingContinuations.jobId, jobId),
+        eq(indexingContinuations.status, expectedStatus),
+      ),
+    )
+    .returning({ id: indexingContinuations.id })
+    .get();
+  if (row) logIndexingEvent(event, { jobId, continuationId });
+  return Boolean(row);
 }
 
 export async function failIndexingJobScheduling(
@@ -250,7 +412,11 @@ export async function indexingJobForWorkspace(
     .get();
 }
 
-export async function runIndexingJob(jobId: string, continuationToken: string) {
+export async function runIndexingJob(
+  jobId: string,
+  continuationToken: string,
+  continuationId: string,
+) {
   const db = await getDb(),
     tokenHash = await sha256(continuationToken),
     now = new Date().toISOString(),
@@ -273,6 +439,24 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
       .returning()
       .get();
   if (!claimed) return null;
+  const workerStarted = await markContinuationWorkerStarted(
+    jobId,
+    continuationId,
+  );
+  if (!workerStarted) {
+    await failJob(
+      jobId,
+      null,
+      "CONTINUATION_ACKNOWLEDGEMENT_MISSING",
+      false,
+    );
+    return {
+      jobId,
+      status: "failed",
+      continuationNeeded: false,
+      continuationId: null,
+    };
+  }
   let attemptId: string | null = null;
   try {
     const persistedAttempt = await db
@@ -350,7 +534,7 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
           failedCount: progress.filesFailed,
           stage: progress.stage,
         });
-      }),
+      }, { discoveryOnly: claimed.discoveryStatus !== "complete" }),
       finishedAt = new Date().toISOString(),
       unsupportedCount = result.filesUnsupported,
       continuationNeeded =
@@ -361,9 +545,24 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
         : result.status === "complete"
           ? "completed"
           : result.status;
-    await db
-      .update(indexingJobs)
-      .set({
+    const persistedContinuation = continuationNeeded
+        ? await db
+            .select({ value: max(indexingContinuations.sequence) })
+            .from(indexingContinuations)
+            .where(eq(indexingContinuations.jobId, jobId))
+            .get()
+        : null,
+      nextContinuationSequence = continuationNeeded
+        ? Math.max(
+            attemptNumber,
+            claimed.continuationCount,
+            persistedContinuation?.value ?? 0,
+          ) + 1
+        : null,
+      nextContinuationId = nextContinuationSequence
+        ? continuationDispatchId(jobId, nextContinuationSequence)
+        : null;
+    const updateJob = db.update(indexingJobs).set({
         status,
         stage: continuationNeeded
           ? "indexing"
@@ -396,12 +595,50 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
             ? "SYNC_PARTIAL"
             : null,
         updatedAt: finishedAt,
-      })
-      .where(eq(indexingJobs.id, jobId));
-    await db
-      .update(indexingJobAttempts)
-      .set({ status: "completed", completedAt: finishedAt, heartbeatAt: finishedAt })
-      .where(eq(indexingJobAttempts.id, candidateAttemptId));
+      }).where(eq(indexingJobs.id, jobId));
+    const updateAttempt = db.update(indexingJobAttempts)
+        .set({ status: "completed", completedAt: finishedAt, heartbeatAt: finishedAt })
+        .where(eq(indexingJobAttempts.id, candidateAttemptId));
+    const completeContinuation = db.update(indexingContinuations)
+        .set({ status: "completed", completedAt: finishedAt })
+        .where(
+          and(
+            eq(indexingContinuations.id, continuationId),
+            eq(indexingContinuations.jobId, jobId),
+            eq(indexingContinuations.status, "worker_started"),
+          ),
+        );
+    if (nextContinuationId) {
+      const persistNext = db.insert(indexingContinuations).values({
+          id: nextContinuationId,
+          jobId,
+          sequence: nextContinuationSequence!,
+          status: "persisted",
+          persistedAt: finishedAt,
+        }).onConflictDoNothing();
+      await db.batch([
+        updateJob,
+        updateAttempt,
+        completeContinuation,
+        persistNext,
+      ]);
+    } else
+      await db.batch([updateJob, updateAttempt, completeContinuation]);
+    logIndexingEvent("continuation_completed", {
+      workspaceId: claimed.workspaceId,
+      connectorId: claimed.connectorId,
+      jobId,
+      continuationId,
+      stage: status,
+    });
+    if (nextContinuationId)
+      logIndexingEvent("continuation_persisted", {
+        workspaceId: claimed.workspaceId,
+        connectorId: claimed.connectorId,
+        jobId,
+        continuationId: nextContinuationId,
+        stage: "indexing",
+      });
     if (!continuationNeeded) {
       await refreshWorkspaceConflicts(claimed.workspaceId, await indexedWorkspaceFiles(claimed.workspaceId));
       await persistCoverageReceipt({
@@ -436,15 +673,30 @@ export async function runIndexingJob(jobId: string, continuationToken: string) {
         stage: status === "completed" ? "completed" : "failed",
       });
     }
-    return { jobId, status, continuationNeeded };
+    return {
+      jobId,
+      status,
+      continuationNeeded,
+      continuationId: nextContinuationId,
+    };
   } catch (error) {
     const code = attemptId
         ? sanitizedErrorCode(error)
         : "INDEXING_ATTEMPT_PERSISTENCE_FAILED",
       reauthorization = code.includes("REAUTHORIZATION") || code.includes("INVALID_GRANT");
     await failJob(jobId, attemptId, code, reauthorization);
-    return { jobId, status: reauthorization ? "reauthorization_required" : "failed", continuationNeeded: false };
+    await failContinuation(jobId, continuationId, code);
+    return {
+      jobId,
+      status: reauthorization ? "reauthorization_required" : "failed",
+      continuationNeeded: false,
+      continuationId: null,
+    };
   }
+}
+
+function continuationDispatchId(jobId: string, sequence: number) {
+  return `continuation_${jobId}_${sequence}`;
 }
 
 async function failJob(

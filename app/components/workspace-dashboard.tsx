@@ -60,6 +60,7 @@ type Dashboard = {
     heartbeatAt: string | null;
     completedAt: string | null;
     updatedAt: string;
+    continuationStatus: string | null;
   };
 };
 export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
@@ -249,7 +250,14 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
                   ? "Read-only Drive access verified"
                   : "Required read-only Drive permission is missing; reconnect Drive."}
               </p>
-              {data.connector.lastErrorCode && <p>{friendlyConnectorError(data.connector.lastErrorCode)}</p>}
+              {data.connector.lastErrorCode && (
+                <p>
+                  {friendlyConnectorError(
+                    data.connector.lastErrorCode,
+                    job?.continuationStatus ?? null,
+                  )}
+                </p>
+              )}
             </div>
             {data.latestSync&&<div><p>{data.latestSync.paginationComplete?"The complete authorized Drive inventory was checked.":"Coverage is incomplete because Drive pagination did not finish."}</p><p>{data.latestSync.filesAdded} new · {data.latestSync.filesUpdated} updated · {data.latestSync.filesUnchanged} unchanged · {data.latestSync.filesRemoved} removed or no longer authorized</p></div>}
             <div>
@@ -430,8 +438,15 @@ function friendlyConnectorStatus(status: string) {
   if (status === "error") return "Google Drive needs attention";
   return "Google Drive disconnected";
 }
-function friendlyConnectorError(code: string) {
-  if (code.includes("TIME_BUDGET") || code.includes("PARTIAL")) return "Indexing paused safely. Your saved progress was preserved; choose Check for updates to continue.";
+function friendlyConnectorError(
+  code: string,
+  continuationStatus: string | null,
+) {
+  if (code.includes("TIME_BUDGET") || code.includes("PARTIAL"))
+    return continuationStatus &&
+      ["acknowledged", "worker_started"].includes(continuationStatus)
+      ? "Indexing is continuing automatically from the saved checkpoint."
+      : "Indexing is paused at the saved checkpoint because the next worker has not started.";
   if (code.includes("TOKEN") || code.includes("AUTH")) return "Your Google permission needs to be renewed. Reconnect Drive to continue safely.";
   return "Some files could not be processed. Searchable files remain available, and you can retry indexing.";
 }

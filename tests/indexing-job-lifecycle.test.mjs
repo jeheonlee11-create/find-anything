@@ -51,9 +51,8 @@ test("stale running jobs recover without a second user action", () => {
 });
 
 test("the recovered first hop starts one worker and reaches discovery", async () => {
-  let attempts = 0,
-    discoveries = 0,
-    outboundRequests = 0;
+  let persistedDispatches = 0,
+    freshWorkers = 0;
   const response = (headers = new Headers()) => ({
       ok: true,
       headers,
@@ -63,46 +62,36 @@ test("the recovered first hop starts one worker and reaches discovery", async ()
     }),
     result = await executeIndexingContinuation({
       jobId: "job_stale_connecting",
-      jobToken: "local-test-token",
-      startWorker: async () => {
-        attempts += 1;
-        discoveries += 1;
+      continuationId: "continuation_job_stale_connecting_1",
+      persistDispatch: async () => {
+        persistedDispatches += 1;
         return response();
       },
-      scheduleNext: async () => {
-        outboundRequests += 1;
+      startFreshWorker: async () => {
+        freshWorkers += 1;
         return response();
       },
     });
-  assert.deepEqual(result, { started: true, scheduledNext: false });
-  assert.equal(attempts, 1);
-  assert.equal(discoveries, 1);
-  assert.equal(outboundRequests, 0);
+  assert.deepEqual(result, { dispatched: true, acknowledged: true });
+  assert.equal(persistedDispatches, 1);
+  assert.equal(freshWorkers, 1);
 });
 
 test("a failed follow-up schedule rejects instead of looking active", async () => {
-  const headers = new Headers({
-    "x-find-anything-job-id": "job_needs_next_batch",
-    "x-find-anything-job-token": "local-test-token",
-  });
   await assert.rejects(
     executeIndexingContinuation({
       jobId: "job_needs_next_batch",
-      jobToken: "local-test-token",
-      startWorker: async () => ({
-        ok: true,
-        headers,
-        async arrayBuffer() {
-          return new ArrayBuffer(0);
-        },
-      }),
-      scheduleNext: async () => ({
+      continuationId: "continuation_job_needs_next_batch_2",
+      persistDispatch: async () => ({
         ok: false,
         headers: new Headers(),
         async arrayBuffer() {
           return new ArrayBuffer(0);
         },
       }),
+      startFreshWorker: async () => {
+        throw new Error("must not start");
+      },
     }),
     /CONTINUATION_SCHEDULING_FAILED/,
   );
@@ -124,7 +113,10 @@ test("job persistence, stale recovery, and cross-request continuation stay wired
   assert.match(jobs, /INDEXING_INVENTORY_UNACCOUNTED/);
   assert.match(worker, /runInternalContinuation/);
   assert.match(worker, /handler\.fetch/);
-  assert.match(worker, /scheduleNext: \(\) => fetch\(/);
+  assert.match(worker, /startFreshWorker: \(\) => fetch\(/);
+  assert.match(worker, /persistDispatch/);
+  assert.match(jobs, /indexingContinuations/);
+  assert.match(jobs, /continuation_persisted/);
   assert.match(worker, /markSchedulingFailure/);
   assert.match(dashboard, /Indexing \$\{job\.processedCount\} of \$\{job\.discoveredCount\} files/);
   assert.match(dashboard, /remaining/);
@@ -165,7 +157,7 @@ test("a stale connecting recovery starts exactly one attempt before discovery", 
       jobs.indexOf("synchronizeGoogleDrive(connector"),
   );
   assert.match(worker, /handler\.fetch\(/);
-  assert.match(continueRoute, /runIndexingJob\(jobId, token\)/);
+  assert.match(continueRoute, /runIndexingJob\(jobId, token, continuationId\)/);
   assert.match(sync, /logIndexingEvent\("discovery_started"/);
 });
 
@@ -190,7 +182,95 @@ test("scheduling failure becomes terminal and first-run active UI hides the read
   assert.match(jobs, /CONTINUATION_SCHEDULING_FAILED/);
   assert.match(jobs, /status: "failed"/);
   assert.match(jobs, /terminalReason: "CONTINUATION_SCHEDULING_FAILED"/);
-  assert.match(worker, /\.catch\(\s*\(\) => markSchedulingFailure/);
+  assert.match(worker, /markSchedulingFailure/);
   assert.match(dashboard, /\) : activeJob \? null : \(/);
   assert.match(dashboard, /Ready to build your searchable index/);
 });
+
+test("the 1,294 discovered and zero processed boundary checkpoints before extraction", async () => {
+  const sync = await readFile(
+    new URL("../lib/google-drive/sync.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(sync, /options: \{ discoveryOnly\?: boolean \}/);
+  assert.match(sync, /if \(options\.discoveryOnly\)/);
+  assert.match(sync, /DISCOVERY_CHECKPOINT_COMPLETE/);
+  assert.match(sync, /filesDeferred: Math\.max\(0, discovered - filesProcessed\)/);
+  assert.match(sync, /processingDeadline = Date\.now\(\) \+ SYNC_TOTAL_BUDGET_MS/);
+  assert.deepEqual(
+    indexingAccounting({
+      discovered: 1294,
+      processed: 0,
+      indexed: 0,
+      unsupported: 0,
+      failed: 0,
+    }),
+    {
+      discovered: 1294,
+      processed: 0,
+      indexed: 0,
+      unsupported: 0,
+      failed: 0,
+      remaining: 1294,
+      fullyAccounted: false,
+    },
+  );
+});
+
+test("multiple durable processing continuations can reach completion", async () => {
+  let processed = 0;
+  for (let sequence = 1; sequence <= 4; sequence += 1) {
+    const result = await executeIndexingContinuation({
+      jobId: "job_multi_batch",
+      continuationId: `continuation_job_multi_batch_${sequence}`,
+      persistDispatch: async () => ({
+        ok: true,
+        headers: new Headers(),
+        async arrayBuffer() {
+          return new ArrayBuffer(0);
+        },
+      }),
+      startFreshWorker: async () => {
+        processed += 4;
+        return {
+          ok: true,
+          headers: new Headers(),
+          async arrayBuffer() {
+            return new ArrayBuffer(0);
+          },
+        };
+      },
+    });
+    assert.deepEqual(result, { dispatched: true, acknowledged: true });
+  }
+  assert.equal(processed, 16);
+  assert.equal(
+    indexingAccounting({
+      discovered: 16,
+      processed,
+      indexed: 16,
+      unsupported: 0,
+      failed: 0,
+    }).fullyAccounted,
+    true,
+  );
+});
+
+test("an acknowledged fresh-worker handoff no longer depends on the browser", async () => {
+  const worker = await readFile(
+    new URL("../worker/index.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(worker, /ctx\.waitUntil/);
+  assert.match(worker, /indexing\/dispatch/);
+  assert.match(worker, /startFreshWorker: \(\) => fetch/);
+  assert.doesNotMatch(worker, /window\.|document\./);
+});
+
+test.todo(
+  "an independent platform trigger drains a persisted continuation after the originating Worker terminates",
+);
+
+test.todo(
+  "an independent platform trigger recovers a dispatched continuation that was never acknowledged or started",
+);
