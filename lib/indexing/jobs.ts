@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, max, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, max, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   connectors,
@@ -12,6 +12,10 @@ import { indexedWorkspaceFiles } from "@/lib/workspace-search/repository";
 import { refreshWorkspaceConflicts } from "@/lib/conflicts/repository";
 import { nextIndexingAttemptNumber } from "@/lib/indexing/job-lifecycle";
 import { logIndexingEvent } from "@/lib/observability/indexing-log";
+import {
+  continuationMessage,
+  type IndexingQueueMessage,
+} from "@/lib/indexing/queue-protocol";
 
 export const INDEXING_VERSION = "literal-v1";
 export const EXTRACTION_VERSION = "structural-v1";
@@ -108,8 +112,11 @@ export async function enqueueIndexingJob(input: {
           id: continuationId,
           jobId: existing.id,
           sequence: continuationSequence,
+          attemptEpoch: existing.retryCount + 1,
           status: "persisted",
           persistedAt: now,
+          availableAt: now,
+          updatedAt: now,
         })
         .onConflictDoNothing(),
     ]);
@@ -148,6 +155,8 @@ export async function enqueueIndexingJob(input: {
       jobId: existing.id,
       continuationToken: token,
       continuationId,
+      continuationSequence,
+      attemptEpoch: existing.retryCount + 1,
       resumed: true,
       alreadyActive: false,
     };
@@ -173,8 +182,11 @@ export async function enqueueIndexingJob(input: {
         id: continuationId,
         jobId,
         sequence: 1,
+        attemptEpoch: 1,
         status: "persisted",
         persistedAt: now,
+        availableAt: now,
+        updatedAt: now,
       }),
     ]);
   } catch (error) {
@@ -208,9 +220,291 @@ export async function enqueueIndexingJob(input: {
     jobId,
     continuationToken: token,
     continuationId,
+    continuationSequence: 1,
+    attemptEpoch: 1,
     resumed: false,
     alreadyActive: false,
   };
+}
+
+export function queueMessageFromEnqueueResult(input: {
+  jobId: string;
+  continuationId?: string;
+  continuationSequence?: number;
+  attemptEpoch?: number;
+}) {
+  if (
+    !input.continuationId ||
+    !input.continuationSequence ||
+    !input.attemptEpoch
+  )
+    return null;
+  return continuationMessage({
+    jobId: input.jobId,
+    continuationId: input.continuationId,
+    sequence: input.continuationSequence,
+    attemptEpoch: input.attemptEpoch,
+  });
+}
+
+export async function leaseDueIndexingContinuations(input: {
+  leaseOwner: string;
+  limit?: number;
+  now?: string;
+  staleDispatchBefore?: string;
+  leaseMs?: number;
+}) {
+  const db = await getDb(),
+    now = input.now ?? new Date().toISOString(),
+    staleDispatchBefore =
+      input.staleDispatchBefore ??
+      new Date(Date.parse(now) - 120_000).toISOString(),
+    leaseExpiresAt = new Date(
+      Date.parse(now) + (input.leaseMs ?? 60_000),
+    ).toISOString(),
+    candidates = await db
+      .select({
+        id: indexingContinuations.id,
+        jobId: indexingContinuations.jobId,
+        sequence: indexingContinuations.sequence,
+        attemptEpoch: indexingContinuations.attemptEpoch,
+      })
+      .from(indexingContinuations)
+      .where(
+        and(
+          lte(indexingContinuations.availableAt, now),
+          or(
+            eq(indexingContinuations.status, "persisted"),
+            and(
+              eq(indexingContinuations.status, "dispatched"),
+              or(
+                lte(indexingContinuations.lastDispatchedAt, staleDispatchBefore),
+                sql`${indexingContinuations.lastDispatchedAt} is null`,
+              ),
+            ),
+          ),
+          or(
+            lte(indexingContinuations.dispatchLeaseExpiresAt, now),
+            sql`${indexingContinuations.dispatchLeaseExpiresAt} is null`,
+          ),
+        ),
+      )
+      .orderBy(indexingContinuations.persistedAt)
+      .limit(Math.min(Math.max(input.limit ?? 25, 1), 100))
+      .all(),
+    leased: IndexingQueueMessage[] = [];
+  for (const candidate of candidates) {
+    const row = await db
+      .update(indexingContinuations)
+      .set({
+        dispatchLeaseOwner: input.leaseOwner,
+        dispatchLeaseExpiresAt: leaseExpiresAt,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(indexingContinuations.id, candidate.id),
+          inArray(indexingContinuations.status, ["persisted", "dispatched"]),
+          or(
+            lte(indexingContinuations.dispatchLeaseExpiresAt, now),
+            sql`${indexingContinuations.dispatchLeaseExpiresAt} is null`,
+          ),
+        ),
+      )
+      .returning({ id: indexingContinuations.id })
+      .get();
+    if (row)
+      leased.push(
+        continuationMessage({
+          jobId: candidate.jobId,
+          continuationId: candidate.id,
+          sequence: candidate.sequence,
+          attemptEpoch: candidate.attemptEpoch,
+          requestedAt: now,
+        }),
+      );
+  }
+  return leased;
+}
+
+export async function markQueueContinuationDispatched(input: {
+  message: IndexingQueueMessage;
+  leaseOwner?: string;
+}) {
+  const db = await getDb(),
+    now = new Date().toISOString(),
+    row = await db
+      .update(indexingContinuations)
+      .set({
+        status: "dispatched",
+        dispatchedAt: sql`coalesce(${indexingContinuations.dispatchedAt}, ${now})`,
+        lastDispatchedAt: now,
+        dispatchCount: sql`${indexingContinuations.dispatchCount} + 1`,
+        dispatchLeaseOwner: null,
+        dispatchLeaseExpiresAt: null,
+        errorCode: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(indexingContinuations.id, input.message.continuationId),
+          eq(indexingContinuations.jobId, input.message.jobId),
+          eq(indexingContinuations.sequence, input.message.sequence),
+          eq(indexingContinuations.attemptEpoch, input.message.attemptEpoch),
+          inArray(indexingContinuations.status, ["persisted", "dispatched"]),
+          input.leaseOwner
+            ? eq(indexingContinuations.dispatchLeaseOwner, input.leaseOwner)
+            : undefined,
+        ),
+      )
+      .returning({ id: indexingContinuations.id })
+      .get();
+  if (row)
+    logIndexingEvent("queue_dispatch_acknowledged", {
+      jobId: input.message.jobId,
+      continuationId: input.message.continuationId,
+    });
+  return Boolean(row);
+}
+
+export async function releaseQueueDispatchLease(input: {
+  message: IndexingQueueMessage;
+  leaseOwner: string;
+  errorCode: string;
+  retryAfterMs?: number;
+}) {
+  const db = await getDb(),
+    now = new Date().toISOString(),
+    availableAt = new Date(
+      Date.now() + (input.retryAfterMs ?? 30_000),
+    ).toISOString();
+  await db
+    .update(indexingContinuations)
+    .set({
+      dispatchLeaseOwner: null,
+      dispatchLeaseExpiresAt: null,
+      availableAt,
+      errorCode: input.errorCode,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(indexingContinuations.id, input.message.continuationId),
+        eq(indexingContinuations.jobId, input.message.jobId),
+        eq(indexingContinuations.dispatchLeaseOwner, input.leaseOwner),
+      ),
+    );
+}
+
+export async function claimQueueContinuationExecution(input: {
+  message: IndexingQueueMessage;
+  leaseOwner: string;
+  leaseMs?: number;
+}) {
+  const db = await getDb(),
+    now = new Date().toISOString(),
+    leaseExpiresAt = new Date(
+      Date.now() + (input.leaseMs ?? 15 * 60_000),
+    ).toISOString(),
+    row = await db
+      .update(indexingContinuations)
+      .set({
+        status: "worker_started",
+        acknowledgedAt: sql`coalesce(${indexingContinuations.acknowledgedAt}, ${now})`,
+        workerStartedAt: sql`coalesce(${indexingContinuations.workerStartedAt}, ${now})`,
+        executionLeaseOwner: input.leaseOwner,
+        executionLeaseExpiresAt: leaseExpiresAt,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(indexingContinuations.id, input.message.continuationId),
+          eq(indexingContinuations.jobId, input.message.jobId),
+          eq(indexingContinuations.sequence, input.message.sequence),
+          eq(indexingContinuations.attemptEpoch, input.message.attemptEpoch),
+          or(
+            inArray(indexingContinuations.status, [
+              "persisted",
+              "dispatched",
+              "acknowledged",
+            ]),
+            and(
+              eq(indexingContinuations.status, "worker_started"),
+              lte(indexingContinuations.executionLeaseExpiresAt, now),
+            ),
+          ),
+        ),
+      )
+      .returning({ id: indexingContinuations.id })
+      .get();
+  if (row)
+    logIndexingEvent("queue_worker_started", {
+      jobId: input.message.jobId,
+      continuationId: input.message.continuationId,
+    });
+  return Boolean(row);
+}
+
+export async function continuationTerminalResult(
+  message: IndexingQueueMessage,
+) {
+  const db = await getDb();
+  return db
+    .select({
+      status: indexingContinuations.status,
+      errorCode: indexingContinuations.errorCode,
+    })
+    .from(indexingContinuations)
+    .where(
+      and(
+        eq(indexingContinuations.id, message.continuationId),
+        eq(indexingContinuations.jobId, message.jobId),
+      ),
+    )
+    .get();
+}
+
+export async function failQueueContinuationPermanently(input: {
+  message: IndexingQueueMessage;
+  errorCode?: string;
+}) {
+  const errorCode = input.errorCode ?? "QUEUE_DELIVERY_EXHAUSTED",
+    db = await getDb(),
+    now = new Date().toISOString();
+  const failed = await db
+    .update(indexingContinuations)
+    .set({
+      status: "failed",
+      failedAt: now,
+      errorCode,
+      dispatchLeaseOwner: null,
+      dispatchLeaseExpiresAt: null,
+      executionLeaseOwner: null,
+      executionLeaseExpiresAt: null,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(indexingContinuations.id, input.message.continuationId),
+        eq(indexingContinuations.jobId, input.message.jobId),
+        inArray(indexingContinuations.status, [
+          "persisted",
+          "dispatched",
+          "acknowledged",
+          "worker_started",
+        ]),
+      ),
+    )
+    .returning({ id: indexingContinuations.id })
+    .get();
+  if (!failed) return false;
+  await failJob(input.message.jobId, null, errorCode, false);
+  logIndexingEvent("queue_dead_lettered", {
+    jobId: input.message.jobId,
+    continuationId: input.message.continuationId,
+    errorCode,
+  });
+  return true;
 }
 
 export async function markContinuationDispatched(
@@ -416,6 +710,7 @@ export async function runIndexingJob(
   jobId: string,
   continuationToken: string,
   continuationId: string,
+  options: { queueClaimed?: boolean } = {},
 ) {
   const db = await getDb(),
     tokenHash = await sha256(continuationToken),
@@ -432,17 +727,18 @@ export async function runIndexingJob(
       .where(
         and(
           eq(indexingJobs.id, jobId),
-          eq(indexingJobs.continuationTokenHash, tokenHash),
+          options.queueClaimed
+            ? undefined
+            : eq(indexingJobs.continuationTokenHash, tokenHash),
           inArray(indexingJobs.status, [...resumable]),
         ),
       )
       .returning()
       .get();
   if (!claimed) return null;
-  const workerStarted = await markContinuationWorkerStarted(
-    jobId,
-    continuationId,
-  );
+  const workerStarted = options.queueClaimed
+    ? true
+    : await markContinuationWorkerStarted(jobId, continuationId);
   if (!workerStarted) {
     await failJob(
       jobId,
@@ -613,8 +909,11 @@ export async function runIndexingJob(
           id: nextContinuationId,
           jobId,
           sequence: nextContinuationSequence!,
+          attemptEpoch: claimed.retryCount + 1,
           status: "persisted",
           persistedAt: finishedAt,
+          availableAt: finishedAt,
+          updatedAt: finishedAt,
         }).onConflictDoNothing();
       await db.batch([
         updateJob,
@@ -678,6 +977,8 @@ export async function runIndexingJob(
       status,
       continuationNeeded,
       continuationId: nextContinuationId,
+      continuationSequence: nextContinuationSequence,
+      attemptEpoch: claimed.retryCount + 1,
     };
   } catch (error) {
     const code = attemptId

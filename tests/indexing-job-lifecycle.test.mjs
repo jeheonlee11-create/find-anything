@@ -6,7 +6,11 @@ import {
   isIndexingJobStale,
   nextIndexingAttemptNumber,
 } from "../lib/indexing/job-lifecycle.ts";
-import { executeIndexingContinuation } from "../worker/indexing-continuation.ts";
+import { IndexingQueueCoordinator } from "../queue-worker/src/coordinator.ts";
+import {
+  SimulatedIndexingSite,
+  SimulatedManagedQueue,
+} from "../queue-worker/src/simulation.ts";
 
 test("an orphaned attempt advances from the highest persisted attempt", () => {
   assert.equal(nextIndexingAttemptNumber(0, 1), 2);
@@ -51,73 +55,45 @@ test("stale running jobs recover without a second user action", () => {
 });
 
 test("the recovered first hop starts one worker and reaches discovery", async () => {
-  let persistedDispatches = 0,
-    freshWorkers = 0;
-  const response = (headers = new Headers()) => ({
-      ok: true,
-      headers,
-      async arrayBuffer() {
-        return new ArrayBuffer(0);
-      },
-    }),
-    result = await executeIndexingContinuation({
-      jobId: "job_stale_connecting",
-      continuationId: "continuation_job_stale_connecting_1",
-      persistDispatch: async () => {
-        persistedDispatches += 1;
-        return response();
-      },
-      startFreshWorker: async () => {
-        freshWorkers += 1;
-        return response();
-      },
-    });
-  assert.deepEqual(result, { dispatched: true, acknowledged: true });
-  assert.equal(persistedDispatches, 1);
-  assert.equal(freshWorkers, 1);
+  const queue = new SimulatedManagedQueue(),
+    site = new SimulatedIndexingSite(4),
+    coordinator = new IndexingQueueCoordinator(queue, site, () => "worker-1");
+  site.persistInitial();
+  assert.deepEqual(await coordinator.reconcile(), { found: 1, dispatched: 1 });
+  await coordinator.consume(queue.take());
+  assert.equal(site.processed, 4);
+  assert.equal(site.executionCount(1), 1);
 });
 
 test("a failed follow-up schedule rejects instead of looking active", async () => {
-  await assert.rejects(
-    executeIndexingContinuation({
-      jobId: "job_needs_next_batch",
-      continuationId: "continuation_job_needs_next_batch_2",
-      persistDispatch: async () => ({
-        ok: false,
-        headers: new Headers(),
-        async arrayBuffer() {
-          return new ArrayBuffer(0);
-        },
-      }),
-      startFreshWorker: async () => {
-        throw new Error("must not start");
-      },
-    }),
-    /CONTINUATION_SCHEDULING_FAILED/,
-  );
+  const queue = new SimulatedManagedQueue(),
+    site = new SimulatedIndexingSite(4),
+    coordinator = new IndexingQueueCoordinator(queue, site, () => "worker-1");
+  site.persistInitial();
+  queue.failNextSend = true;
+  assert.deepEqual(await coordinator.reconcile(), { found: 1, dispatched: 0 });
+  assert.equal(site.processed, 0);
 });
 
 test("job persistence, stale recovery, and cross-request continuation stay wired", async () => {
-  const [jobs, worker, dashboard, workspaceRoute, continueRoute, failureRoute, logging] = await Promise.all([
+  const [jobs, worker, dashboard, workspaceRoute, dueRoute, executeRoute, queueWorker, logging] = await Promise.all([
     readFile(new URL("../lib/indexing/jobs.ts", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/workspace-dashboard.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/workspaces/[workspaceId]/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/api/internal/indexing/continue/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/api/internal/indexing/scheduling-failure/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/internal/indexing/queue/due/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/internal/indexing/queue/execute/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../queue-worker/src/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/observability/indexing-log.ts", import.meta.url), "utf8"),
   ]);
   assert.match(jobs, /max\(indexingJobAttempts\.attemptNumber\)/);
   assert.match(jobs, /INDEXING_ATTEMPT_PERSISTENCE_FAILED/);
   assert.match(jobs, /filesUnsupported/);
   assert.match(jobs, /INDEXING_INVENTORY_UNACCOUNTED/);
-  assert.match(worker, /runInternalContinuation/);
-  assert.match(worker, /handler\.fetch/);
-  assert.match(worker, /startFreshWorker: \(\) => fetch\(/);
-  assert.match(worker, /persistDispatch/);
+  assert.match(worker, /enqueueWithManagedQueue/);
+  assert.doesNotMatch(worker, /ctx\.waitUntil/);
   assert.match(jobs, /indexingContinuations/);
   assert.match(jobs, /continuation_persisted/);
-  assert.match(worker, /markSchedulingFailure/);
   assert.match(dashboard, /Indexing \$\{job\.processedCount\} of \$\{job\.discoveredCount\} files/);
   assert.match(dashboard, /remaining/);
   assert.match(dashboard, /unsupportedCount/);
@@ -126,25 +102,27 @@ test("job persistence, stale recovery, and cross-request continuation stay wired
   assert.doesNotMatch(dashboard, /location\.reload\(/);
   assert.match(workspaceRoute, /isIndexingJobStale/);
   assert.match(workspaceRoute, /enqueueIndexingJob/);
-  assert.match(workspaceRoute, /x-find-anything-job-token/);
-  assert.match(continueRoute, /worker_started/);
-  assert.match(continueRoute, /runIndexingJob/);
-  assert.match(failureRoute, /failIndexingJobScheduling/);
+  assert.match(workspaceRoute, /x-find-anything-continuation-sequence/);
+  assert.match(dueRoute, /leaseDueIndexingContinuations/);
+  assert.match(executeRoute, /claimQueueContinuationExecution/);
+  assert.match(executeRoute, /queueClaimed: true/);
+  assert.match(queueWorker, /async queue/);
+  assert.match(queueWorker, /async scheduled/);
   for (const event of [
     "recovery_requested",
-    "continuation_scheduled",
-    "worker_started",
+    "queue_dispatch_persisted",
+    "queue_worker_started",
     "attempt_created",
-    "scheduling_failure",
+    "queue_message_retried",
   ])
     assert.match(logging, new RegExp(`"${event}"`));
 });
 
 test("a stale connecting recovery starts exactly one attempt before discovery", async () => {
-  const [jobs, worker, continueRoute, sync] = await Promise.all([
+  const [jobs, worker, executeRoute, sync] = await Promise.all([
     readFile(new URL("../lib/indexing/jobs.ts", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/api/internal/indexing/continue/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/internal/indexing/queue/execute/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/google-drive/sync.ts", import.meta.url), "utf8"),
   ]);
   assert.match(jobs, /eq\(indexingJobs\.updatedAt, existing\.updatedAt\)/);
@@ -156,8 +134,8 @@ test("a stale connecting recovery starts exactly one attempt before discovery", 
     jobs.indexOf('logIndexingEvent("attempt_created"') <
       jobs.indexOf("synchronizeGoogleDrive(connector"),
   );
-  assert.match(worker, /handler\.fetch\(/);
-  assert.match(continueRoute, /runIndexingJob\(jobId, token, continuationId\)/);
+  assert.match(worker, /enqueueWithManagedQueue/);
+  assert.match(executeRoute, /runIndexingJob\([\s\S]*body\.message\.jobId[\s\S]*body\.message\.continuationId/);
   assert.match(sync, /logIndexingEvent\("discovery_started"/);
 });
 
@@ -173,16 +151,15 @@ test("concurrent stale polling cannot create duplicate attempts", async () => {
   assert.match(jobs, /INDEXING_ATTEMPT_PERSISTENCE_COLLISION/);
 });
 
-test("scheduling failure becomes terminal and first-run active UI hides the ready panel", async () => {
-  const [jobs, worker, dashboard] = await Promise.all([
+test("scheduling failure is durably retryable and first-run active UI hides the ready panel", async () => {
+  const [jobs, queueWorker, dashboard] = await Promise.all([
     readFile(new URL("../lib/indexing/jobs.ts", import.meta.url), "utf8"),
-    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../queue-worker/src/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/workspace-dashboard.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(jobs, /CONTINUATION_SCHEDULING_FAILED/);
-  assert.match(jobs, /status: "failed"/);
-  assert.match(jobs, /terminalReason: "CONTINUATION_SCHEDULING_FAILED"/);
-  assert.match(worker, /markSchedulingFailure/);
+  assert.match(jobs, /releaseQueueDispatchLease/);
+  assert.match(queueWorker, /coordinator\(env\)\.reconcile/);
+  assert.match(queueWorker, /consumeDeadLetter/);
   assert.match(dashboard, /\) : activeJob \? null : \(/);
   assert.match(dashboard, /Ready to build your searchable index/);
 });
@@ -218,31 +195,13 @@ test("the 1,294 discovered and zero processed boundary checkpoints before extrac
 });
 
 test("multiple durable processing continuations can reach completion", async () => {
-  let processed = 0;
-  for (let sequence = 1; sequence <= 4; sequence += 1) {
-    const result = await executeIndexingContinuation({
-      jobId: "job_multi_batch",
-      continuationId: `continuation_job_multi_batch_${sequence}`,
-      persistDispatch: async () => ({
-        ok: true,
-        headers: new Headers(),
-        async arrayBuffer() {
-          return new ArrayBuffer(0);
-        },
-      }),
-      startFreshWorker: async () => {
-        processed += 4;
-        return {
-          ok: true,
-          headers: new Headers(),
-          async arrayBuffer() {
-            return new ArrayBuffer(0);
-          },
-        };
-      },
-    });
-    assert.deepEqual(result, { dispatched: true, acknowledged: true });
-  }
+  const queue = new SimulatedManagedQueue(),
+    site = new SimulatedIndexingSite(16, 4),
+    coordinator = new IndexingQueueCoordinator(queue, site, () => "worker-1");
+  site.persistInitial();
+  await coordinator.reconcile();
+  while (queue.messages.length) await coordinator.consume(queue.take());
+  const processed = site.processed;
   assert.equal(processed, 16);
   assert.equal(
     indexingAccounting({
@@ -257,20 +216,28 @@ test("multiple durable processing continuations can reach completion", async () 
 });
 
 test("an acknowledged fresh-worker handoff no longer depends on the browser", async () => {
-  const worker = await readFile(
-    new URL("../worker/index.ts", import.meta.url),
-    "utf8",
-  );
-  assert.match(worker, /ctx\.waitUntil/);
-  assert.match(worker, /indexing\/dispatch/);
-  assert.match(worker, /startFreshWorker: \(\) => fetch/);
+  const [worker, queueWorker] = await Promise.all([
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../queue-worker/src/index.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(worker, /enqueueWithManagedQueue/);
+  assert.match(queueWorker, /async queue/);
+  assert.match(queueWorker, /async scheduled/);
+  assert.doesNotMatch(worker, /ctx\.waitUntil/);
   assert.doesNotMatch(worker, /window\.|document\./);
 });
 
-test.todo(
-  "an independent platform trigger drains a persisted continuation after the originating Worker terminates",
-);
+test("the independent scheduled trigger drains persisted continuations", async () => {
+  const source = await readFile(new URL("../queue-worker/src/index.ts", import.meta.url), "utf8");
+  assert.match(source, /async scheduled/);
+  assert.match(source, /coordinator\(env\)\.reconcile/);
+});
 
-test.todo(
-  "an independent platform trigger recovers a dispatched continuation that was never acknowledged or started",
-);
+test("the independent scheduled trigger recovers unacknowledged dispatches", async () => {
+  const [source, config] = await Promise.all([
+    readFile(new URL("../queue-worker/src/coordinator.ts", import.meta.url), "utf8"),
+    readFile(new URL("../queue-worker/wrangler.example.jsonc", import.meta.url), "utf8"),
+  ]);
+  assert.match(source, /claimDue/);
+  assert.match(config, /"\* \* \* \* \*"/);
+});

@@ -1,0 +1,44 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "find-anything-indexing-queue",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-23",
+  "workers_dev": false,
+  "vars": {
+    "INDEXING_QUEUE_ENABLED": "false",
+    "SITE_ORIGIN": "https://app.findanything.dev",
+    "INDEXING_QUEUE_NAME": "find-anything-indexing",
+    "INDEXING_DLQ_NAME": "find-anything-indexing-dlq"
+  },
+  "queues": {
+    "producers": [
+      {
+        "binding": "INDEXING_QUEUE",
+        "queue": "find-anything-indexing"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "find-anything-indexing",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 8,
+        "dead_letter_queue": "find-anything-indexing-dlq",
+        "max_concurrency": 3
+      },
+      {
+        "queue": "find-anything-indexing-dlq",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 3,
+        "max_concurrency": 1
+      }
+    ]
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "limits": {
+    "cpu_ms": 300000
+  }
+}

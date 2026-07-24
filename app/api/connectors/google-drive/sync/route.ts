@@ -46,10 +46,16 @@ export async function POST(request: Request) {
     const job = await enqueueIndexingJob({ workspaceId, connectorId: connector.id, actorId: actor.actorId });
     await recordBetaEvent({ actorId: actor.actorId, workspaceId, event: "indexing_started", properties: { resumed: job.resumed } });
     const headers: Record<string, string> = { "cache-control": "no-store" };
-    if (job.continuationToken) {
+    if (
+      job.continuationId &&
+      job.continuationSequence &&
+      job.attemptEpoch
+    ) {
       headers["x-find-anything-job-id"] = job.jobId;
-      headers["x-find-anything-job-token"] = job.continuationToken;
       headers["x-find-anything-continuation-id"] = job.continuationId;
+      headers["x-find-anything-continuation-sequence"] =
+        String(job.continuationSequence);
+      headers["x-find-anything-attempt-epoch"] = String(job.attemptEpoch);
     }
     return NextResponse.json(
       {

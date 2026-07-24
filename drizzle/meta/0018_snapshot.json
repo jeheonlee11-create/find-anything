@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "c1961c74-8e79-4554-ad51-3be4b79a42a2",
-  "prevId": "fd550baa-8924-4eeb-b698-47a6b8e9c90e",
+  "id": "e30b953e-2b29-4404-9366-aa220f537849",
+  "prevId": "c1961c74-8e79-4554-ad51-3be4b79a42a2",
   "tables": {
     "api_keys": {
       "name": "api_keys",
@@ -1245,6 +1245,14 @@
           "notNull": true,
           "autoincrement": false
         },
+        "attempt_epoch": {
+          "name": "attempt_epoch",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
         "status": {
           "name": "status",
           "type": "text",
@@ -1259,8 +1267,44 @@
           "notNull": true,
           "autoincrement": false
         },
+        "available_at": {
+          "name": "available_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "dispatched_at": {
           "name": "dispatched_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_dispatched_at": {
+          "name": "last_dispatched_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "dispatch_count": {
+          "name": "dispatch_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "dispatch_lease_owner": {
+          "name": "dispatch_lease_owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "dispatch_lease_expires_at": {
+          "name": "dispatch_lease_expires_at",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -1275,6 +1319,20 @@
         },
         "worker_started_at": {
           "name": "worker_started_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "execution_lease_owner": {
+          "name": "execution_lease_owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "execution_lease_expires_at": {
+          "name": "execution_lease_expires_at",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -1300,6 +1358,13 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -1311,10 +1376,25 @@
           ],
           "isUnique": true
         },
-        "indexing_continuations_status_idx": {
-          "name": "indexing_continuations_status_idx",
+        "indexing_continuations_status_available_idx": {
+          "name": "indexing_continuations_status_available_idx",
           "columns": [
-            "status"
+            "status",
+            "available_at"
+          ],
+          "isUnique": false
+        },
+        "indexing_continuations_dispatch_lease_idx": {
+          "name": "indexing_continuations_dispatch_lease_idx",
+          "columns": [
+            "dispatch_lease_expires_at"
+          ],
+          "isUnique": false
+        },
+        "indexing_continuations_execution_lease_idx": {
+          "name": "indexing_continuations_execution_lease_idx",
+          "columns": [
+            "execution_lease_expires_at"
           ],
           "isUnique": false
         }

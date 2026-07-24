@@ -1,0 +1,11 @@
+{
+  "name": "@find-anything/indexing-queue-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:simulation": "node --test ../../tests/queue-indexing-architecture.test.mjs",
+    "dev": "wrangler dev --config wrangler.local.jsonc"
+  }
+}

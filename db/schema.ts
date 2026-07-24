@@ -615,6 +615,7 @@ export const indexingContinuations = sqliteTable(
     id: text("id").primaryKey(),
     jobId: text("job_id").notNull(),
     sequence: integer("sequence").notNull(),
+    attemptEpoch: integer("attempt_epoch").notNull().default(1),
     status: text("status", {
       enum: [
         "persisted",
@@ -626,19 +627,35 @@ export const indexingContinuations = sqliteTable(
       ],
     }).notNull(),
     persistedAt: text("persisted_at").notNull(),
+    availableAt: text("available_at").notNull(),
     dispatchedAt: text("dispatched_at"),
+    lastDispatchedAt: text("last_dispatched_at"),
+    dispatchCount: integer("dispatch_count").notNull().default(0),
+    dispatchLeaseOwner: text("dispatch_lease_owner"),
+    dispatchLeaseExpiresAt: text("dispatch_lease_expires_at"),
     acknowledgedAt: text("acknowledged_at"),
     workerStartedAt: text("worker_started_at"),
+    executionLeaseOwner: text("execution_lease_owner"),
+    executionLeaseExpiresAt: text("execution_lease_expires_at"),
     completedAt: text("completed_at"),
     failedAt: text("failed_at"),
     errorCode: text("error_code"),
+    updatedAt: text("updated_at").notNull(),
   },
   (t) => ({
     jobSequenceIdx: uniqueIndex("indexing_continuations_job_sequence_idx").on(
       t.jobId,
       t.sequence,
     ),
-    statusIdx: index("indexing_continuations_status_idx").on(t.status),
+    statusAvailableIdx: index(
+      "indexing_continuations_status_available_idx",
+    ).on(t.status, t.availableAt),
+    dispatchLeaseIdx: index("indexing_continuations_dispatch_lease_idx").on(
+      t.dispatchLeaseExpiresAt,
+    ),
+    executionLeaseIdx: index("indexing_continuations_execution_lease_idx").on(
+      t.executionLeaseExpiresAt,
+    ),
   }),
 );
 

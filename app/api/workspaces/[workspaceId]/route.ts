@@ -32,10 +32,17 @@ export async function GET(
         connectorId: dashboard.connector.id,
         actorId: actor.actorId,
       });
-      if (resumed.continuationToken) {
+      if (
+        resumed.continuationId &&
+        resumed.continuationSequence &&
+        resumed.attemptEpoch
+      ) {
         headers["x-find-anything-job-id"] = resumed.jobId;
-        headers["x-find-anything-job-token"] = resumed.continuationToken;
         headers["x-find-anything-continuation-id"] = resumed.continuationId;
+        headers["x-find-anything-continuation-sequence"] =
+          String(resumed.continuationSequence);
+        headers["x-find-anything-attempt-epoch"] =
+          String(resumed.attemptEpoch);
       }
     }
     return NextResponse.json(dashboard, { headers });

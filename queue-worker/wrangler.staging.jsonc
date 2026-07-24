@@ -1,0 +1,41 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "find-anything-indexing-staging",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-23",
+  "workers_dev": true,
+  "vars": {
+    "INDEXING_QUEUE_ENABLED": "false",
+    "SITE_ORIGIN": "https://staging-site.invalid",
+    "INDEXING_QUEUE_NAME": "find-anything-indexing-staging",
+    "INDEXING_DLQ_NAME": "find-anything-indexing-dlq-staging"
+  },
+  "queues": {
+    "producers": [
+      {
+        "binding": "INDEXING_QUEUE",
+        "queue": "find-anything-indexing-staging"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "find-anything-indexing-staging",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 8,
+        "dead_letter_queue": "find-anything-indexing-dlq-staging",
+        "max_concurrency": 3
+      },
+      {
+        "queue": "find-anything-indexing-dlq-staging",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 3,
+        "max_concurrency": 1
+      }
+    ]
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  }
+}

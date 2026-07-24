@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    "baseUrl": ".."
+  },
+  "include": ["src/**/*.ts", "../lib/indexing/queue-protocol.ts"]
+}
