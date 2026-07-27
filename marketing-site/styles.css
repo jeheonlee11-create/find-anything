@@ -388,6 +388,9 @@ section { position: relative; }
 /* ---------- Subpage (docs/privacy/security) ---------- */
 .doc-page { padding: 72px 0 90px; }
 .doc-page .lede { color: var(--muted); font-size: 19px; max-width: 720px; }
+/* Grid and flex children default to min-width:auto, which lets a wide <pre>
+   push its whole column open. Let these containers shrink and scroll instead. */
+.prose, .code, .doc-layout > * { min-width: 0; }
 .prose { max-width: 760px; }
 .prose h2 { font-size: 27px; letter-spacing: -.02em; margin: 44px 0 12px; }
 .prose h3 { font-size: 19px; margin: 28px 0 8px; }
@@ -411,18 +414,23 @@ section { position: relative; }
   .footer-in { grid-template-columns: 1fr 1fr; }
   .toc { position: static; }
   .dev-copy { order: 2; }
-}
-@media (max-width: 620px) {
-  body { font-size: 16px; }
+  /* The full link row needs ~840px alongside the brand and CTA; collapse it
+     into the menu here rather than letting it push the nav past the viewport. */
   .nav-links { display: none; }
   .nav-links.open {
     display: flex; position: absolute; top: 70px; left: 0; right: 0; flex-direction: column;
     align-items: flex-start; gap: 4px; background: var(--bg); border-bottom: 1px solid var(--line); padding: 16px 22px;
   }
   .nav-links.open a { padding: 10px 0; font-size: 16px; }
-  .nav-cta .btn-primary:not(.mobile-cta) { display: none; }
   .nav-links.open .mobile-cta { display: inline-flex; margin-top: 10px; color: var(--accent-ink); }
   .nav-toggle { display: grid; }
+  /* Two pricing cards plus the 64px conflict gutter no longer fit side by side. */
+  .conflict-wrap { grid-template-columns: 1fr; }
+  .conflict-vs span { writing-mode: horizontal-tb; }
+}
+@media (max-width: 620px) {
+  body { font-size: 16px; }
+  .nav-cta .btn-primary:not(.mobile-cta) { display: none; }
   .band { padding: 72px 0; }
   .hero { padding: 80px 0 60px; }
   .conflict-wrap { grid-template-columns: 1fr; }
