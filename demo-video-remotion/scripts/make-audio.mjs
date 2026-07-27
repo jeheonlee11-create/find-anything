@@ -124,6 +124,23 @@ addAt(40, 0.8, chime([midiToFreq(72), midiToFreq(76), midiToFreq(79)]), 0.7);
 for (let i = 0; i < 8; i++) addAt(42.2 + i * 0.18, 0.12, (t, d) => tick(t, d, i === 7 ? 720 : 1500), 0.5, i % 2 ? 0.2 : -0.2);
 // evidence feature pills, scene starts 47s
 for (let i = 0; i < 8; i++) addAt(50.4 + i * 0.12, 0.1, (t, d) => tick(t, d, 1000 + i * 60), 0.35);
+// cinematic sub-boom impacts (low sine with fast attack, long decay)
+const boom = (t, dur) => {
+  const f = 46 + 10 * Math.exp(-8 * (t / dur)); // slight downward pitch drop
+  const atk = Math.min(1, t / 0.012);
+  return Math.sin(2 * Math.PI * f * t) * atk * Math.exp(-4.5 * (t / dur)) * 0.9;
+};
+addAt(35.0, 1.6, boom, 0.5); // ranking scene entrance
+addAt(40.0, 1.6, boom, 0.45); // winner reveal
+addAt(55.0, 2.2, boom, 0.5); // outro impact
+// riser into the outro (2s of rising, brightening detuned sines)
+const riser = (t, dur) => {
+  const prog = t / dur;
+  const f = 120 + 620 * prog * prog;
+  const s = (Math.sin(2 * Math.PI * f * t) + Math.sin(2 * Math.PI * f * 1.005 * t)) * 0.5;
+  return s * prog * prog * 0.35;
+};
+addAt(53.0, 2.0, riser, 0.4);
 // outro resolve chime at 55s
 addAt(55.4, 1.4, chime([midiToFreq(69), midiToFreq(72), midiToFreq(76), midiToFreq(81)]), 0.7);
 

@@ -18,6 +18,14 @@ and does **not** overwrite the previously approved videos
 | `STORYBOARD.md` | Timestamped storyboard |
 | `AUDIO-LICENSE.md` | Audio source & license record |
 
+## Cinematic layer
+A persistent `CinematicBackground` (drifting particles, an orbiting lime glow, a
+diagonal sheen, vignette, and tiled film grain) plays continuously under every
+scene. Each scene runs through a virtual `Camera` (slow push-in + drift + a soft
+focus-dissolve on entry/exit), and headlines blur-in kinetically. Audio adds
+sub-boom impacts on the key reveals and a riser into the outro. See
+`src/components/cinematic.tsx`.
+
 ## Edit
 - **Timing & copy:** `src/config.ts` (`SCENES` frame counts + `COPY`). Everything
   on screen is driven from here.

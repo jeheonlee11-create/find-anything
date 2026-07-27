@@ -2,45 +2,33 @@ import React from "react";
 import { interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 import { theme } from "../theme";
 
-/** Full-frame background with a subtle brand orbit + vignette. */
+/** Scene content wrapper. Transparent so the persistent CinematicBackground
+ *  shows through and bridges the cuts. */
 export const Frame: React.FC<{ children: React.ReactNode; tint?: string }> = ({
   children,
-  tint = theme.bg,
 }) => (
   <div
     style={{
       position: "absolute",
       inset: 0,
-      background: `radial-gradient(120% 120% at 80% 0%, ${theme.bg2} 0%, ${tint} 55%)`,
+      background: "transparent",
       fontFamily: theme.sans,
       color: theme.ink,
       overflow: "hidden",
     }}
   >
-    <div
-      style={{
-        position: "absolute",
-        right: -260,
-        top: -120,
-        width: 900,
-        height: 900,
-        borderRadius: "50%",
-        border: `1px solid ${theme.line2}`,
-        boxShadow: `0 0 0 90px ${theme.panel}, 0 0 0 91px ${theme.line}`,
-        opacity: 0.35,
-      }}
-    />
     {children}
   </div>
 );
 
-/** Rises + fades in with spring, staggered by `delay` frames. */
+/** Rises + fades in with spring, staggered by `delay` frames; optional blur-in. */
 export const Rise: React.FC<{
   children: React.ReactNode;
   delay?: number;
   y?: number;
+  blur?: number;
   style?: React.CSSProperties;
-}> = ({ children, delay = 0, y = 40, style }) => {
+}> = ({ children, delay = 0, y = 40, blur = 0, style }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const s = spring({ frame: frame - delay, fps, config: { damping: 200, mass: 0.7 } });
@@ -50,6 +38,7 @@ export const Rise: React.FC<{
         ...style,
         opacity: s,
         transform: `translateY(${interpolate(s, [0, 1], [y, 0])}px)`,
+        filter: blur ? `blur(${interpolate(s, [0, 1], [blur, 0])}px)` : undefined,
       }}
     >
       {children}
@@ -87,7 +76,7 @@ export const BigText: React.FC<{
   color?: string;
   style?: React.CSSProperties;
 }> = ({ children, size = 96, delay = 0, color = theme.ink, style }) => (
-  <Rise delay={delay}>
+  <Rise delay={delay} blur={18} y={28}>
     <div
       style={{
         fontSize: size,
@@ -95,6 +84,7 @@ export const BigText: React.FC<{
         letterSpacing: -size * 0.03,
         fontWeight: 800,
         color,
+        textShadow: `0 2px 40px rgba(0,0,0,0.35)`,
         ...style,
       }}
     >

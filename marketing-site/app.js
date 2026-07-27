@@ -12,7 +12,7 @@
   try {
     var saved = localStorage.getItem(THEME_KEY);
     if (saved === "light" || saved === "dark") root.setAttribute("data-theme", saved);
-  } catch (e) { /* storage may be unavailable */ }
+  } catch { /* storage may be unavailable */ }
 
   function currentTheme() {
     var attr = root.getAttribute("data-theme");
@@ -27,7 +27,7 @@
     themeBtn.addEventListener("click", function () {
       var next = currentTheme() === "light" ? "dark" : "light";
       root.setAttribute("data-theme", next);
-      try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
+      try { localStorage.setItem(THEME_KEY, next); } catch {}
       syncToggleState();
     });
   }
@@ -120,7 +120,7 @@
       var valid = name.length > 0 && /.+@.+\..+/.test(email);
       if (!valid) {
         (name ? form.email : form.fullName).focus();
-        form.reportValidity && form.reportValidity();
+        if (form.reportValidity) form.reportValidity();
         return;
       }
       var success = document.createElement("div");
@@ -132,7 +132,7 @@
         ". This preview validated your request in-browser and sent nothing over the network. " +
         "On the live site, the secure application takes it from here.</p>";
       form.replaceWith(success);
-      success.focus && success.focus();
+      if (success.focus) success.focus();
     });
   }
 
