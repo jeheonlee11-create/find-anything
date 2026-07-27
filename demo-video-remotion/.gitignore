@@ -1,0 +1,6 @@
+node_modules/
+# Rendered video outputs are large and regenerable via `npm run render`
+out/*.mp4
+# Audio stems are regenerable via `npm run audio` (deterministic)
+public/audio/*.wav
+.remotion/

@@ -1,0 +1,20 @@
+/** Brand tokens for the demo video, carried from the Find Anything design system. */
+export const theme = {
+  bg: "#10130f",
+  bg2: "#161b13",
+  panel: "#1b2119",
+  panel2: "#212a1d",
+  ink: "#f5f4ec",
+  muted: "#b3bdac",
+  faint: "#8b9585",
+  line: "#35402f",
+  line2: "#46543c",
+  lime: "#c8ff45",
+  limeDim: "#a6d92f",
+  amber: "#f4c95d",
+  danger: "#e26d5c",
+  accentSoft: "#202a1c",
+  amberSoft: "#2a2413",
+  mono: "'SF Mono', 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace",
+  sans: "'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif",
+} as const;

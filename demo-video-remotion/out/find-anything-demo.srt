@@ -1,0 +1,35 @@
+1
+00:00:00,000 --> 00:00:07,000
+An AI agent asks: "What is Acme AI's current enterprise price?" — and finds two documents that disagree.
+
+2
+00:00:07,000 --> 00:00:14,000
+Pricing Draft.pdf lists $95,000 / year plus $20,000 implementation. It is an early draft.
+
+3
+00:00:14,000 --> 00:00:21,000
+Pricing Final.pdf lists $120,000 / year plus $25,000 implementation. It is the approved final.
+
+4
+00:00:21,000 --> 00:00:27,000
+Both stay visible. Nothing is hidden — the contradiction is reported with exact figures and citations.
+
+5
+00:00:27,000 --> 00:00:35,000
+Pricing Final ranks higher, and Find Anything shows why: newer, approved, and explicitly authoritative.
+
+6
+00:00:35,000 --> 00:00:41,000
+A restricted Finance model is outside the agent's permission scope. It is excluded — its contents are never exposed.
+
+7
+00:00:41,000 --> 00:00:47,000
+Coverage is accounted for: 8 sources known, 7 accessible and searched, 1 unavailable and excluded.
+
+8
+00:00:47,000 --> 00:00:55,000
+Every answer carries its evidence: citations, source links, confidence, coverage, trace, replay, receipt, and diff.
+
+9
+00:00:55,000 --> 00:00:59,000
+Find Anything — Trusted knowledge for AI agents.

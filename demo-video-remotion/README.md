@@ -1,0 +1,48 @@
+# Find Anything — demo video (React + Remotion)
+
+A new **1920×1080 · 16:9 · 30fps · 59s** product demo of the synthetic Acme AI
+pricing-conflict story. Standalone project — it does **not** touch the main app,
+and does **not** overwrite the previously approved videos
+(`../public/find-anything-demo.mp4`, `~/Downloads/FindAnything Demo Video.mov`).
+
+## Deliverables (in `out/` and `public/audio/`)
+| File | What |
+|------|------|
+| `out/find-anything-demo-1080p.mp4` | Final 1080p, H.264 + AAC (music + effects) |
+| `out/find-anything-demo-silent.mp4` | Silent 1080p (understandable via on-screen cards) |
+| `out/find-anything-demo-preview.mp4` | Low-res 0.5× preview |
+| `out/thumbnail.png` | Poster frame (scene 4) |
+| `out/find-anything-demo.srt` | Subtitles / narrative cards |
+| `public/audio/music.wav` | Music stem (original) |
+| `public/audio/effects.wav` | Effects stem (original) |
+| `STORYBOARD.md` | Timestamped storyboard |
+| `AUDIO-LICENSE.md` | Audio source & license record |
+
+## Edit
+- **Timing & copy:** `src/config.ts` (`SCENES` frame counts + `COPY`). Everything
+  on screen is driven from here.
+- **Look:** `src/theme.ts` (brand tokens), `src/components/ui.tsx` (shared parts).
+- **Scenes:** `src/scenes.tsx` (one component per beat).
+- **Audio:** `scripts/make-audio.mjs` (chords, events, gains).
+
+## Run / render
+```bash
+npm install                 # already installed here
+npm run audio               # (re)generate original music + effects stems
+npm run studio              # interactive editor at http://localhost:3000
+npm run render              # → out/find-anything-demo-1080p.mp4 (with audio)
+npm run render:silent       # → out/find-anything-demo-silent.mp4
+npm run render:preview      # → out/find-anything-demo-preview.mp4 (0.5×)
+npm run thumbnail           # → out/thumbnail.png
+```
+Rendering uses Remotion's bundled headless Chromium + ffmpeg (downloaded on
+first render). No network assets are required at render time.
+
+## Validation performed
+- ffprobe: 59.05s, 1920×1080 (DAR 16:9), 30fps H.264 + AAC 48kHz stereo.
+- Representative frames inspected (hook → outro): large readable copy, no black
+  frames, on-brand.
+- Audio mixed peak ≈ −3.5 dBFS → no clipping.
+- Contradiction preserved throughout ($95k/$20k draft stays visible beside the
+  $120k/$25k final); no unsupported product claims; synthetic Acme AI data only;
+  no voiceover; original audio only.
