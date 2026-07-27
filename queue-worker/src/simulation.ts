@@ -47,6 +47,7 @@ export class SimulatedIndexingSite implements SitePort {
   terminalError: string | null = null;
   executeFailure: string | null = null;
   executeTerminalFailure: string | null = null;
+  rollbackNextCommit: string | null = null;
   now = Date.parse("2026-07-23T12:00:00.000Z");
   readonly discovered: number;
   readonly batchSize: number;
@@ -183,26 +184,43 @@ export class SimulatedIndexingSite implements SitePort {
     record.status = "worker_started";
     record.executionLeaseOwner = leaseOwner;
     record.executionLeaseUntil = this.now + 15 * 60_000;
-    record.executionCount += 1;
     this.events.push(`worker_started:${message.sequence}`);
+    // Everything below is staged and applied atomically at the commit
+    // boundary, mirroring the single db.batch() in jobs.ts that persists the
+    // batch, advances counters, completes this continuation, and persists the
+    // next continuation. A crash at that boundary must leave no partial
+    // effect: the lease claim, counters, stored result, and next continuation
+    // all roll back together so a redelivery reprocesses exactly once.
     const processedNow = Math.min(
       this.batchSize,
       Math.max(0, this.discovered - this.processed),
     );
-    this.processed += processedNow;
-    this.indexed += processedNow;
-    const terminal = this.processed >= this.discovered;
-    let next: IndexingQueueMessage | null = null;
-    if (!terminal) {
-      next = continuationMessage({
-        jobId: message.jobId,
-        continuationId: `continuation_${message.jobId}_${message.sequence + 1}`,
-        sequence: message.sequence + 1,
-        attemptEpoch: message.attemptEpoch,
-        requestedAt: new Date(this.now).toISOString(),
-      });
-      this.persist(next);
+    const projectedProcessed = this.processed + processedNow;
+    const terminal = projectedProcessed >= this.discovered;
+    const next: IndexingQueueMessage | null = terminal
+      ? null
+      : continuationMessage({
+          jobId: message.jobId,
+          continuationId: `continuation_${message.jobId}_${message.sequence + 1}`,
+          sequence: message.sequence + 1,
+          attemptEpoch: message.attemptEpoch,
+          requestedAt: new Date(this.now).toISOString(),
+        });
+    if (this.rollbackNextCommit) {
+      const code = this.rollbackNextCommit;
+      this.rollbackNextCommit = null;
+      record.status = "persisted";
+      record.executionLeaseOwner = null;
+      record.executionLeaseUntil = 0;
+      this.events.push(`rolled_back:${message.sequence}:${code}`);
+      const error = new Error(code);
+      Object.assign(error, { rolledBack: true });
+      throw error;
     }
+    this.processed = projectedProcessed;
+    this.indexed += processedNow;
+    record.executionCount += 1;
+    if (next) this.persist(next);
     record.status = "completed";
     record.executionLeaseOwner = null;
     record.executionLeaseUntil = 0;

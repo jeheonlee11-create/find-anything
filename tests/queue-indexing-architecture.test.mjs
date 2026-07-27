@@ -270,3 +270,42 @@ test("queue messages never contain credentials, identities, or file data", () =>
   ])
     assert.doesNotMatch(serialized, new RegExp(forbidden, "i"));
 });
+
+test("a crash at the batch-commit boundary rolls back with no partial effect", async () => {
+  const queue = new SimulatedManagedQueue(),
+    site = new SimulatedIndexingSite(12, 4),
+    coordinator = new IndexingQueueCoordinator(queue, site, () => "fixed"),
+    message = site.persistInitial();
+  await site.markDispatched(message);
+  // The worker leases the continuation and processes a batch, but the single
+  // transaction that would persist the batch, advance counters, complete this
+  // continuation, and persist the next one fails to commit.
+  site.rollbackNextCommit = "SIMULATED_COMMIT_ROLLBACK";
+  await assert.rejects(
+    () => coordinator.consume(message),
+    /SIMULATED_COMMIT_ROLLBACK/,
+  );
+  // Nothing durable advanced: counters untouched, no stored result, no next
+  // continuation, the lease released, and the row is redeliverable.
+  assert.equal(site.processed, 0);
+  assert.equal(site.indexed, 0);
+  assert.equal(site.executionCount(1), 0);
+  assert.equal(site.continuations.size, 1);
+  const record = site.continuations.get(message.continuationId);
+  assert.equal(record.status, "persisted");
+  assert.equal(record.result, null);
+  assert.equal(record.executionLeaseOwner, null);
+  // Redelivery of the same message commits exactly one batch — the rolled-back
+  // attempt did not double-count files or persist a duplicate continuation.
+  await coordinator.consume(message);
+  assert.equal(site.processed, 4);
+  assert.equal(site.executionCount(1), 1);
+  assert.equal(site.continuations.size, 2);
+  // The rest of the Drive drains to an exactly-once completion.
+  while (queue.messages.length) await coordinator.consume(queue.take());
+  assert.equal(site.processed, 12);
+  assert.equal(site.indexed, 12);
+  assert.equal(site.continuations.size, 3);
+  for (let sequence = 1; sequence <= site.continuations.size; sequence += 1)
+    assert.equal(site.executionCount(sequence), 1);
+});
