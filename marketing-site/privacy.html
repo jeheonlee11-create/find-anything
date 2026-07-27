@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy — Find Anything</title>
+  <meta name="description" content="How Find Anything treats data: permission-scoped access, no document contents in logs, synthetic-only marketing, and least-privilege by design." />
+  <meta name="color-scheme" content="dark light" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23c8ff45'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='18' font-weight='800' text-anchor='middle' fill='%2310130f'%3EF%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="nav is-stuck" id="nav">
+    <div class="shell nav-in">
+      <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">F</span> Find&nbsp;Anything</a>
+      <nav class="nav-links" id="navLinks" aria-label="Primary">
+        <a href="index.html#problem">Problem</a>
+        <a href="index.html#coverage">Coverage</a>
+        <a href="docs.html">Docs</a>
+        <a href="security.html">Security</a>
+      </nav>
+      <div class="nav-cta">
+        <button class="icon-btn" id="themeBtn" aria-label="Toggle color theme" aria-pressed="false">
+          <svg class="theme-icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          <svg class="theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+        </button>
+        <a class="btn btn-primary" href="index.html#request">Request access</a>
+        <button class="icon-btn nav-toggle" id="navToggle" aria-label="Open menu" aria-expanded="false" aria-controls="navLinks">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main" class="doc-page">
+    <div class="shell prose">
+      <span class="eyebrow">Privacy</span>
+      <h1 style="font-size:clamp(34px,5vw,52px);letter-spacing:-.035em;margin:14px 0 10px">Privacy at a control layer</h1>
+      <p class="lede">Find Anything's job is to respect boundaries. The same discipline applies to how it treats your data. This page summarizes the principles; it is a product summary, not a legal contract.</p>
+
+      <div class="callout">This is a synthetic demonstration site. It sets no advertising or tracking cookies, and the request form validates in your browser without transmitting anything.</div>
+
+      <h2>Least privilege by design</h2>
+      <p>Retrieval runs inside the permissions the agent already holds. Find Anything never reads a source that is out of scope, and it cannot widen access on its own.</p>
+
+      <h2>Document contents stay in your sources</h2>
+      <ul>
+        <li>Traces and receipts record <em>what ran and why</em> — scope, ranking, conflicts, coverage — not the private contents of documents.</li>
+        <li>An excluded source contributes nothing to a result: not its title, not a snippet, not its contents.</li>
+        <li>We do not copy your documents into marketing, demos, or fixtures. Every example here is fictional Acme AI data.</li>
+      </ul>
+
+      <h2>Data we would process (product)</h2>
+      <p>To operate the connector, the product processes the minimum needed to retrieve and rank in-scope content and to produce receipts you can audit. Access is granted through the source's own consent flow and can be revoked there at any time.</p>
+
+      <h2>What we don't do</h2>
+      <ul>
+        <li>We don't sell personal data.</li>
+        <li>We don't train on your private documents without explicit agreement.</li>
+        <li>We don't claim access to sources you haven't connected, or integrations we haven't shipped.</li>
+      </ul>
+
+      <h2>Your controls</h2>
+      <ul>
+        <li>Revoke connector access from the source (e.g. Google) at any time.</li>
+        <li>Request export or deletion of account data.</li>
+        <li>Review receipts to see exactly what any retrieval did.</li>
+      </ul>
+
+      <p style="margin-top:28px"><a class="btn btn-ghost" href="index.html">← Back to overview</a> &nbsp; <a class="btn btn-ghost" href="security.html">Security →</a></p>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="shell">
+      <div class="footer-bar" style="border-top:1px solid var(--line);padding-top:24px">
+        <span>© 2026 Find Anything · Synthetic demonstration site</span>
+        <span class="mono"><a href="docs.html" style="color:var(--muted)">Docs</a> · <a href="security.html" style="color:var(--muted)">Security</a></span>
+      </div>
+    </div>
+  </footer>
+  <script src="app.js" defer></script>
+</body>
+</html>

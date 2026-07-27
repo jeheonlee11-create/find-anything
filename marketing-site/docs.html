@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Docs — Find Anything</title>
+  <meta name="description" content="How Find Anything's permission-aware retrieval control layer works: the retrieval response shape, coverage, conflicts, confidence, replay, receipts, and diffs." />
+  <meta name="color-scheme" content="dark light" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23c8ff45'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='18' font-weight='800' text-anchor='middle' fill='%2310130f'%3EF%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="nav is-stuck" id="nav">
+    <div class="shell nav-in">
+      <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">F</span> Find&nbsp;Anything</a>
+      <nav class="nav-links" id="navLinks" aria-label="Primary">
+        <a href="index.html#problem">Problem</a>
+        <a href="index.html#conflict">Conflicts</a>
+        <a href="index.html#coverage">Coverage</a>
+        <a href="index.html#developers">Developers</a>
+        <a href="docs.html" aria-current="page">Docs</a>
+      </nav>
+      <div class="nav-cta">
+        <button class="icon-btn" id="themeBtn" aria-label="Toggle color theme" aria-pressed="false">
+          <svg class="theme-icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          <svg class="theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+        </button>
+        <a class="btn btn-primary" href="index.html#request">Request access</a>
+        <button class="icon-btn nav-toggle" id="navToggle" aria-label="Open menu" aria-expanded="false" aria-controls="navLinks">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main" class="doc-page">
+    <div class="shell">
+      <span class="eyebrow">Documentation</span>
+      <h1 style="font-size:clamp(34px,5vw,56px);letter-spacing:-.035em;margin:14px 0 10px">How Find Anything works</h1>
+      <p class="lede">A permission-aware retrieval control layer. You send a query with the agent's scope; you get back an answer <em>and</em> everything needed to decide whether to trust it. Examples below use synthetic Acme AI data.</p>
+
+      <div class="doc-layout" style="margin-top:44px">
+        <aside class="toc" aria-label="On this page">
+          <a href="#overview">Overview</a>
+          <a href="#api">Retrieval API</a>
+          <a href="#coverage">Coverage accounting</a>
+          <a href="#conflicts">Conflicts &amp; authority</a>
+          <a href="#confidence">Confidence</a>
+          <a href="#replay">Replay, receipts, diffs</a>
+          <a href="#boundaries">Boundaries</a>
+        </aside>
+
+        <div class="prose">
+          <h2 id="overview">Overview</h2>
+          <p>Find Anything sits between your AI agent and your knowledge sources. It enforces permissions, retrieves candidate evidence, ranks it, detects conflicts, and returns a structured result your agent can reason about — including an honest account of what it could <em>not</em> read.</p>
+          <div class="callout">Find Anything governs <b>retrieval evidence</b>. It does not assert that a source is factually correct, and it is not legal, medical, or financial advice.</div>
+
+          <h2 id="api">Retrieval API</h2>
+          <p>A single request returns the answer with its citations, coverage, conflicts, confidence, and a <code>receipt_id</code>.</p>
+          <div class="code">
+            <div class="code-head"><span class="dot g" aria-hidden="true"></span> POST /v1/retrieve</div>
+<pre><span class="t-com">// Request</span>
+{
+  <span class="t-key">"query"</span>: <span class="t-str">"current enterprise price"</span>,
+  <span class="t-key">"scope"</span>: <span class="t-str">"agent:acme-sales"</span>,   <span class="t-com">// permissions enforced server-side</span>
+  <span class="t-key">"connector"</span>: <span class="t-str">"google_drive"</span>
+}</pre>
+          </div>
+          <div class="code" style="margin-top:16px">
+            <div class="code-head"><span class="dot g" aria-hidden="true"></span> 200 OK</div>
+<pre>{
+  <span class="t-key">"answer"</span>: <span class="t-str">"Enterprise: $120,000/yr + $25,000 impl."</span>,
+  <span class="t-key">"confidence"</span>: <span class="t-str">"medium"</span>,
+  <span class="t-key">"citations"</span>: [
+    { <span class="t-key">"source"</span>: <span class="t-str">"Pricing Final.pdf"</span>, <span class="t-key">"page"</span>: <span class="t-num">2</span>, <span class="t-key">"authoritative"</span>: <span class="t-key">true</span> },
+    { <span class="t-key">"source"</span>: <span class="t-str">"Pricing Draft.pdf"</span>, <span class="t-key">"page"</span>: <span class="t-num">1</span>, <span class="t-key">"superseded"</span>: <span class="t-key">true</span> }
+  ],
+  <span class="t-key">"conflicts"</span>: [
+    { <span class="t-key">"field"</span>: <span class="t-str">"annual_price"</span>, <span class="t-key">"values"</span>: [<span class="t-str">"$120,000"</span>, <span class="t-str">"$95,000"</span>] }
+  ],
+  <span class="t-key">"coverage"</span>: { <span class="t-key">"known"</span>: <span class="t-num">8</span>, <span class="t-key">"searched"</span>: <span class="t-num">7</span>,
+                <span class="t-key">"excluded"</span>: [{ <span class="t-key">"reason"</span>: <span class="t-str">"out_of_scope"</span> }] },
+  <span class="t-key">"receipt_id"</span>: <span class="t-str">"rcpt_9f2a…"</span>
+}</pre>
+          </div>
+
+          <h2 id="coverage">Coverage accounting</h2>
+          <p>Coverage is the difference between what exists and what was read. <code>known</code> is how many in-scope sources were identified; <code>searched</code> is how many were actually retrieved; <code>excluded</code> lists what was skipped and why (permission, outage, unsupported format). Excluded sources contribute no titles, snippets, or contents.</p>
+          <ul>
+            <li><b>Honest denominator</b> — results report 7 of 8, never "complete".</li>
+            <li><b>Distinct outcomes</b> — searched, excluded (out of scope), unavailable, unsupported, and failed are separate states.</li>
+          </ul>
+
+          <h2 id="conflicts">Conflicts &amp; authority</h2>
+          <p>When two in-scope sources disagree on a field, the disagreement is reported — both values, both citations. Ranking never deletes the loser. Authority is explained from observable signals: recency, an approved status, and explicit "final/authoritative" markers. Find Anything explains <em>why</em> one source ranked higher; it does not claim the higher-ranked value is objectively true.</p>
+
+          <h2 id="confidence">Confidence</h2>
+          <p>Confidence summarizes how much to trust a result. It drops when conflicts are unresolved, when coverage is incomplete, or when the top source lacks authority signals. It is a signal for your agent's control flow — e.g. escalate to a human when confidence is low.</p>
+
+          <h2 id="replay">Replay, receipts &amp; diffs</h2>
+          <ul>
+            <li><b>Receipt</b> — an immutable record of exactly what a retrieval did.</li>
+            <li><b>Replay</b> — re-run a retrieval from its original inputs to reproduce the result.</li>
+            <li><b>Diff</b> — compare two runs to see what changed when sources change (e.g. the day Pricing Final superseded Pricing Draft).</li>
+          </ul>
+
+          <h2 id="boundaries">Boundaries &amp; connectors</h2>
+          <p>Google Drive is the live connector today. Everything else is labeled <b>Planned</b> and is not available yet. Find Anything only ever reads what the agent is already permitted to read.</p>
+          <div class="callout">Everything on this documentation site is a synthetic demonstration. No real names, emails, file paths, tokens, workspace identifiers, queries, or document contents appear anywhere.</div>
+          <p style="margin-top:28px"><a class="btn btn-ghost" href="index.html">← Back to overview</a></p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="shell">
+      <div class="footer-bar" style="border-top:1px solid var(--line);padding-top:24px">
+        <span>© 2026 Find Anything · Synthetic demonstration site</span>
+        <span class="mono"><a href="privacy.html" style="color:var(--muted)">Privacy</a> · <a href="security.html" style="color:var(--muted)">Security</a></span>
+      </div>
+    </div>
+  </footer>
+  <script src="app.js" defer></script>
+</body>
+</html>

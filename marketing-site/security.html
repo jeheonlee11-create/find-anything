@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Security — Find Anything</title>
+  <meta name="description" content="Find Anything's security posture: permission-aware retrieval, no document contents in logs, immutable auditable receipts, and hard boundaries around excluded sources." />
+  <meta name="color-scheme" content="dark light" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23c8ff45'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='18' font-weight='800' text-anchor='middle' fill='%2310130f'%3EF%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="nav is-stuck" id="nav">
+    <div class="shell nav-in">
+      <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">F</span> Find&nbsp;Anything</a>
+      <nav class="nav-links" id="navLinks" aria-label="Primary">
+        <a href="index.html#problem">Problem</a>
+        <a href="index.html#coverage">Coverage</a>
+        <a href="docs.html">Docs</a>
+        <a href="privacy.html">Privacy</a>
+      </nav>
+      <div class="nav-cta">
+        <button class="icon-btn" id="themeBtn" aria-label="Toggle color theme" aria-pressed="false">
+          <svg class="theme-icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          <svg class="theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+        </button>
+        <a class="btn btn-primary" href="index.html#request">Request access</a>
+        <button class="icon-btn nav-toggle" id="navToggle" aria-label="Open menu" aria-expanded="false" aria-controls="navLinks">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main" class="doc-page">
+    <div class="shell prose">
+      <span class="eyebrow">Security</span>
+      <h1 style="font-size:clamp(34px,5vw,52px);letter-spacing:-.035em;margin:14px 0 10px">Built to hold boundaries</h1>
+      <p class="lede">A retrieval control layer only earns trust if it is trustworthy under the hood. These are the properties Find Anything is designed around. This is a posture summary, not a compliance certification.</p>
+
+      <h2>Permission-aware retrieval</h2>
+      <p>Scope is enforced on every request, server-side. Results never cross a permission the agent does not hold. There is no path by which retrieval widens its own access.</p>
+
+      <h2>No document contents in telemetry</h2>
+      <ul>
+        <li>Traces capture decisions — scope resolution, ranking signals, conflict detection, coverage — not the private text of your files.</li>
+        <li>Receipts are designed to be shareable for audit without leaking source contents.</li>
+      </ul>
+
+      <h2>Excluded means excluded</h2>
+      <p>When a source is out of scope, unavailable, or unsupported, it is counted in coverage and contributes nothing else. Its existence may be acknowledged; its contents are never surfaced.</p>
+
+      <h2>Auditable by construction</h2>
+      <ul>
+        <li><b>Immutable receipts</b> — a durable record of exactly what a retrieval did.</li>
+        <li><b>Replay</b> — reconstruct any answer from its original inputs.</li>
+        <li><b>Diffs</b> — prove what changed between two runs when sources change.</li>
+      </ul>
+
+      <h2>Honest capability claims</h2>
+      <p>Google Drive is the only live connector; everything else is labeled Planned. Find Anything does not claim factual correctness, universal completeness, or access to sources you have not connected.</p>
+
+      <div class="callout">Responsible disclosure: security reports for the product would be handled through a dedicated channel published on the live application. This page is part of a synthetic demonstration site.</div>
+
+      <p style="margin-top:28px"><a class="btn btn-ghost" href="index.html">← Back to overview</a> &nbsp; <a class="btn btn-ghost" href="privacy.html">Privacy →</a></p>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="shell">
+      <div class="footer-bar" style="border-top:1px solid var(--line);padding-top:24px">
+        <span>© 2026 Find Anything · Synthetic demonstration site</span>
+        <span class="mono"><a href="docs.html" style="color:var(--muted)">Docs</a> · <a href="privacy.html" style="color:var(--muted)">Privacy</a></span>
+      </div>
+    </div>
+  </footer>
+  <script src="app.js" defer></script>
+</body>
+</html>
