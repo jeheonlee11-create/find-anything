@@ -54,3 +54,14 @@ first render). No network assets are required at render time.
 - Contradiction preserved throughout ($95k/$20k draft stays visible beside the
   $120k/$25k final); no unsupported product claims; synthetic Acme AI data only;
   no voiceover; original audio only.
+
+## Walkthrough composition (added later)
+
+`FindAnythingWalkthrough` — a ~2:35 literal product walkthrough (connect →
+index → ask → conflict → ranking → coverage → evidence → API → outro) for
+"attach a demo, ≤3 min" contexts. The 59s `FindAnythingDemo` is unchanged.
+
+- Timing/copy: `src/walkthrough-config.ts` · scenes: `src/walkthrough-scenes.tsx`
+- Storyboard: `WALKTHROUGH-STORYBOARD.md` · subtitles: `out/find-anything-walkthrough.srt`
+- Audio stems: `npm run audio:walkthrough` (original, synthesized)
+- Render: `npm run render:walkthrough` / `render:walkthrough:silent` / `render:walkthrough:preview` / `thumbnail:walkthrough`

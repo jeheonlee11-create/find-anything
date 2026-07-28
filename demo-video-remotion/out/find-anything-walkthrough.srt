@@ -1,0 +1,67 @@
+1
+00:00:00,400 --> 00:00:05,800
+How Find Anything works — a permission-aware retrieval control layer, in five steps.
+
+2
+00:00:06,800 --> 00:00:12,200
+Step 1 — Connect Google Drive.
+
+3
+00:00:12,400 --> 00:00:21,600
+Read-only access, granted through Google's own consent screen. Find Anything never widens its scope.
+
+4
+00:00:22,800 --> 00:00:31,800
+Step 2 — Indexing is durable and honest. Counts come from the database, not a spinner.
+
+5
+00:00:32,000 --> 00:00:41,600
+1,294 files discovered, then indexed in order. Close the tab — indexing continues on the server.
+
+6
+00:00:42,800 --> 00:00:51,600
+Step 3 — An agent asks a question: "What is Acme AI's current enterprise price?"
+
+7
+00:00:51,800 --> 00:00:56,600
+It asks inside the permissions it already holds.
+
+8
+00:00:57,800 --> 00:01:08,000
+Step 4 — Two sources disagree. Pricing Draft says $95,000; Pricing Final says $120,000. Both stay visible.
+
+9
+00:01:08,200 --> 00:01:16,600
+The contradiction is reported with exact figures and citations — nothing is silently resolved.
+
+10
+00:01:17,800 --> 00:01:25,000
+One source governs, and you see why: newer, approved, explicitly authoritative.
+
+11
+00:01:25,200 --> 00:01:32,600
+Ranking is explained from observable signals — never asserted as objective truth.
+
+12
+00:01:33,800 --> 00:01:42,600
+Step 5 — Coverage counts what it could not read: 8 sources known, 7 searched.
+
+13
+00:01:42,800 --> 00:01:50,600
+A restricted Finance source is excluded — acknowledged in the count, contents never exposed.
+
+14
+00:01:51,800 --> 00:02:01,000
+Every answer carries its receipts: citations, confidence, and a step-by-step trace.
+
+15
+00:02:01,200 --> 00:02:10,600
+Trace the ranking. Replay the exact retrieval. Diff two runs when sources change.
+
+16
+00:02:11,400 --> 00:02:22,600
+For developers: one call returns the answer and its evidence together — as structured fields.
+
+17
+00:02:23,400 --> 00:02:34,600
+Find Anything. Trusted knowledge for AI agents.

@@ -9,7 +9,12 @@
     "render:silent": "remotion render FindAnythingDemo out/find-anything-demo-silent.mp4 --props=./props.silent.json",
     "render:preview": "remotion render FindAnythingDemo out/find-anything-demo-preview.mp4 --props=./props.audio.json --scale=0.5 --crf=30",
     "thumbnail": "remotion still FindAnythingDemo out/thumbnail.png --frame=980",
-    "audio": "node scripts/make-audio.mjs"
+    "audio": "node scripts/make-audio.mjs",
+    "audio:walkthrough": "node scripts/make-walkthrough-audio.mjs",
+    "render:walkthrough": "remotion render FindAnythingWalkthrough out/find-anything-walkthrough-1080p.mp4 --props=./props.audio.json",
+    "render:walkthrough:silent": "remotion render FindAnythingWalkthrough out/find-anything-walkthrough-silent.mp4 --props=./props.silent.json",
+    "render:walkthrough:preview": "remotion render FindAnythingWalkthrough out/find-anything-walkthrough-preview.mp4 --props=./props.audio.json --scale=0.5 --crf=30",
+    "thumbnail:walkthrough": "remotion still FindAnythingWalkthrough out/walkthrough-thumbnail.png --frame=90"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.0",
