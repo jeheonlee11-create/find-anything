@@ -16,11 +16,11 @@
   <meta name="twitter:card" content="summary" />
   <meta name="twitter:title" content="Find Anything — Trusted knowledge for AI agents" />
   <meta name="twitter:description" content="A permission-aware retrieval control layer for AI agents: citations, conflicts, coverage, confidence, and when not to trust a result." />
-  <!-- Waitlist endpoint. Leave empty on static hosting (the form falls back to
-       an honest mailto request). Set to "/api/beta/waitlist" when this page is
-       served from the application origin, or to a full URL if that origin
-       allows cross-origin requests. No secrets belong here. -->
-  <meta name="fa-waitlist-endpoint" content="" />
+  <!-- Waitlist endpoint. "/api/waitlist" is served by _worker.js on Cloudflare
+       Pages, which proxies server-side to the application's real waitlist API.
+       Leave empty on hosting without the worker (the form then falls back to an
+       honest mailto request). No secrets belong here. -->
+  <meta name="fa-waitlist-endpoint" content="/api/waitlist" />
   <!-- meta:end -->
   <link rel="preload" href="styles.css" as="style" />
   <link rel="stylesheet" href="styles.css" />
@@ -36,6 +36,7 @@
         <span class="brand-mark" aria-hidden="true">F</span> Find&nbsp;Anything
       </a>
       <nav class="nav-links" id="navLinks" aria-label="Primary">
+        <a href="#demo">Demo</a>
         <a href="#problem">Problem</a>
         <a href="#conflict">Conflicts</a>
         <a href="#coverage">Coverage</a>
@@ -43,6 +44,7 @@
         <a href="#developers">Developers</a>
         <a href="#security">Security</a>
         <a href="docs.html">Docs</a>
+        <a href="https://app.findanything.dev/app">Sign in</a>
         <a class="btn btn-primary mobile-cta" href="#request">Request access</a>
       </nav>
       <div class="nav-cta">
@@ -69,7 +71,7 @@
           <p class="hero-sub">Find Anything is a permission-aware retrieval control layer. It shows agents what they found, what they missed, where sources conflict, why one source ranked higher — and when retrieval should not be trusted.</p>
           <div class="hero-actions">
             <a class="btn btn-primary" href="#request">Request access</a>
-            <a class="btn btn-ghost" href="#conflict">See a conflict resolved</a>
+            <a class="btn btn-ghost" href="#demo">Watch the 56-second demo</a>
           </div>
           <p class="hero-note"><b>Google&nbsp;Drive integration built and tested</b> — working in private beta; authenticated access pending Google restricted-scope verification. Other connectors are labeled Planned.<br>Find Anything governs <b>retrieval evidence</b> — it does not assert factual correctness or make decisions for you.</p>
         </div>
@@ -105,8 +107,26 @@
       <span><i>◆</i> Retrieval diffs</span>
     </div></div>
 
+    <!-- DEMO VIDEO -->
+    <section class="band" id="demo">
+      <div class="shell">
+        <div class="sec-head reveal">
+          <span class="eyebrow">56-second demo</span>
+          <h2>Watch a conflict get caught.</h2>
+          <p>The full loop on synthetic Acme AI data: connect Drive, index, ask, and get an answer with citations, a surfaced price conflict, and honest coverage.</p>
+        </div>
+        <div class="video-frame reveal" data-d="1">
+          <video controls preload="none" playsinline poster="find-anything-demo-poster.png" crossorigin="anonymous">
+            <source src="find-anything-demo.mp4" type="video/mp4" />
+            <track kind="captions" src="find-anything-demo-captions.vtt" srclang="en" label="English" default />
+            Your browser doesn't support embedded video. <a href="find-anything-demo.mp4">Download the demo</a>.
+          </video>
+        </div>
+      </div>
+    </section>
+
     <!-- PROBLEM -->
-    <section class="band" id="problem">
+    <section class="band alt" id="problem">
       <div class="shell">
         <div class="sec-head reveal">
           <span class="eyebrow">The problem</span>
@@ -122,7 +142,7 @@
     </section>
 
     <!-- CONFLICT DEMO -->
-    <section class="band alt" id="conflict">
+    <section class="band" id="conflict">
       <div class="shell">
         <div class="sec-head reveal">
           <span class="eyebrow">Synthetic demonstration · Acme AI</span>
@@ -165,7 +185,7 @@
     </section>
 
     <!-- COVERAGE / PERMISSION -->
-    <section class="band" id="coverage">
+    <section class="band alt" id="coverage">
       <div class="shell">
         <div class="sec-head reveal">
           <span class="eyebrow">Coverage &amp; permission</span>
@@ -202,7 +222,7 @@
     </section>
 
     <!-- EVIDENCE / CITATION -->
-    <section class="band alt" id="evidence">
+    <section class="band" id="evidence">
       <div class="shell">
         <div class="sec-head reveal">
           <span class="eyebrow">Evidence you can audit</span>
@@ -243,7 +263,7 @@
     </section>
 
     <!-- CAPABILITIES -->
-    <section class="band" id="capabilities">
+    <section class="band alt" id="capabilities">
       <div class="shell">
         <div class="sec-head reveal">
           <span class="eyebrow">The control layer</span>
@@ -267,7 +287,7 @@
     </section>
 
     <!-- DEVELOPERS -->
-    <section class="band alt" id="developers">
+    <section class="band" id="developers">
       <div class="shell">
         <div class="sec-head reveal">
           <span class="eyebrow">For developers</span>
@@ -309,7 +329,7 @@
     </section>
 
     <!-- SECURITY -->
-    <section class="band" id="security">
+    <section class="band alt" id="security">
       <div class="shell">
         <div class="sec-head reveal">
           <span class="eyebrow">Security &amp; boundaries</span>
@@ -319,14 +339,14 @@
         <div class="sec-grid">
           <article class="sec-card reveal"><div class="si" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7z"/></svg></div><h3>Permission-aware retrieval</h3><p>Results never cross a permission an agent doesn't hold. Scope is enforced on every request.</p></article>
           <article class="sec-card reveal" data-d="1"><div class="si" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h16M12 4v16"/></svg></div><h3>No content in logs</h3><p>Traces and receipts record what ran and why — not the private contents of your documents.</p></article>
-          <article class="sec-card reveal" data-d="2"><div class="si" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V7a6 6 0 1 1 12 0v2M5 9h14v11H5z"/></svg></div><h3>Excluded stays excluded</h3><p>An out-of-scope source contributes nothing to a result — not even its title or a snippet.</p></article>
+          <article class="sec-card reveal" data-d="2"><div class="si" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V7a6 6 0 1 1 12 0v2M5 9h14v11H5z"/></svg></div><h3>Excluded stays excluded</h3><p>An out-of-scope source contributes no content — no text, snippets, or quotes. Its name appears in coverage only when known from previously authorized inventory.</p></article>
           <article class="sec-card reveal" data-d="3"><div class="si" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 5-4 8-8 10-4-2-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg></div><h3>Auditable by construction</h3><p>Receipts store what each retrieval ran against. Unchanged inputs replay deterministically; changed inputs produce a reviewable diff.</p></article>
         </div>
       </div>
     </section>
 
     <!-- CONNECTORS -->
-    <section class="band alt" id="connectors">
+    <section class="band" id="connectors">
       <div class="shell">
         <div class="sec-head reveal">
           <span class="eyebrow">Connectors</span>
@@ -354,8 +374,7 @@
             <span class="eyebrow">Request access</span>
             <h2>Give your agents knowledge they can defend.</h2>
             <p>Find Anything is a controlled private beta. Tell us about your knowledge and your agents, and we'll review the fit.</p>
-            <p class="hero-note" id="formMode" data-mode="mailto">This page has no submission backend — a valid request opens your email client instead. Nothing is transmitted silently.</p>
-            <p class="hero-note">Prefer a form that saves directly? <a href="https://app.findanything.dev/#request-access" style="color:var(--accent)">Use the secure application form&nbsp;→</a></p>
+            <p class="hero-note" id="formMode" data-mode="live">Requests are saved by the secure application and reviewed for the controlled beta.</p>
           </div>
           <form class="form reveal" data-d="1" id="accessForm" novalidate>
             <div class="form-row">
@@ -366,6 +385,12 @@
               <label>Company <input name="company" type="text" autocomplete="organization" required placeholder="Northwind Legal" /></label>
               <label>Role <input name="jobTitle" type="text" autocomplete="organization-title" required placeholder="Head of Knowledge" /></label>
             </div>
+            <label>I'm interested in
+              <select name="intent">
+                <option value="beta" selected>Requesting beta access</option>
+                <option value="demo">Booking a demo</option>
+              </select>
+            </label>
             <div class="form-row">
               <label>Company size
                 <select name="companySize" required>
@@ -393,6 +418,7 @@
                 <label><input type="checkbox" name="knowledgeTools" value="Notion" /> Notion</label>
                 <label><input type="checkbox" name="knowledgeTools" value="Microsoft 365" /> Microsoft 365</label>
                 <label><input type="checkbox" name="knowledgeTools" value="GitHub" /> GitHub</label>
+                <label><input type="checkbox" name="knowledgeTools" value="Jira" /> Jira</label>
                 <label><input type="checkbox" name="knowledgeTools" value="Other" /> Other</label>
               </div>
             </fieldset>
@@ -441,6 +467,10 @@
           <h4>Company</h4>
           <a href="privacy.html">Privacy</a>
           <a href="security.html">Security</a>
+          <a href="https://app.findanything.dev/terms">Terms</a>
+          <a href="https://app.findanything.dev/app">Sign in</a>
+          <a href="mailto:hello@findanything.dev">Contact</a>
+          <a href="mailto:security@findanything.dev">Security contact</a>
           <a href="#request">Request access</a>
         </div>
       </div>

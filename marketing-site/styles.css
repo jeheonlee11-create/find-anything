@@ -221,6 +221,15 @@ section { position: relative; }
 .sec-head h2 { font-size: clamp(34px, 4.6vw, 60px); line-height: .98; letter-spacing: -.035em; margin: 16px 0 0; font-weight: 800; }
 .sec-head p { color: var(--muted); font-size: 19px; margin: 18px 0 0; }
 
+/* ---------- Demo video ---------- */
+.video-frame {
+  border: 1px solid var(--line-2); background: #080a07; padding: 10px;
+  border-radius: var(--radius); box-shadow: var(--shadow); max-width: 980px;
+}
+:root[data-theme="light"] .video-frame { background: #14170f; }
+.video-frame video { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; background: #080a07; }
+.video-frame video::cue { background: rgba(16, 19, 15, .9); color: #fff; }
+
 /* ---------- Problem narrative ---------- */
 .problem-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
 .problem-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 26px; background: var(--panel); box-shadow: var(--card-shadow); }

@@ -75,6 +75,13 @@ let body = index
   .replace(/<\/body>[\s\S]*$/i, "")
   .replace(/<script[^>]*src="app\.js"[^>]*><\/script>/i, "");
 
+/* The bundle can't carry the 15 MB demo video (and sandboxed hosts block
+   remote media), so swap the player for a pointer to the live site. */
+body = body.replace(
+  /<div class="video-frame[\s\S]*?<\/video>\s*<\/div>/,
+  '<p class="hero-note">The 56-second demo plays on the live site: <a href="https://findanything.dev/#demo" style="color:var(--accent)">findanything.dev/#demo</a></p>',
+);
+
 /* Insert the folded-in views directly after </main> so they sit above the
    footer; appending at the end of <body> would render them below it. */
 if (!/<\/main>/i.test(body)) throw new Error("expected </main> in index.html");
@@ -84,7 +91,10 @@ const title = (index.match(/<title>([\s\S]*?)<\/title>/i) || [, "Find Anything"]
 const desc = (index.match(/<meta name="description" content="([^"]*)"/i) || [, ""])[1];
 const favicon = (index.match(/<link rel="icon"[^>]*>/i) || [""])[0];
 // Canonical/OG/Twitter/waitlist-endpoint tags marked in index.html's head.
-const metaBlock = (index.match(/<!-- meta:start[\s\S]*?meta:end -->/i) || [""])[0];
+// The bundle has no _worker.js behind it, so blank the waitlist endpoint —
+// the form then uses its honest mailto fallback instead of a dead fetch.
+const metaBlock = (index.match(/<!-- meta:start[\s\S]*?meta:end -->/i) || [""])[0]
+  .replace(/(name="fa-waitlist-endpoint" content=")[^"]*(")/, "$1$2");
 
 const head = `<title>${title}</title>
 <meta name="description" content="${desc}" />

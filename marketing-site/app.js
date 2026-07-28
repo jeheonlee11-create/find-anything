@@ -149,9 +149,12 @@
   var SENT_KEY = "fa-waitlist-sent";
   var MAILTO = "hello@findanything.dev";
 
-  if (modeEl && endpoint) {
-    modeEl.textContent = "Requests are saved by the secure application and reviewed for the controlled beta.";
-    modeEl.setAttribute("data-mode", "live");
+  // The shipped page runs in live mode (endpoint set, markup says so). When the
+  // endpoint is blank — the single-file bundle, or hosting without _worker.js —
+  // flip the notice to describe the honest mailto fallback instead.
+  if (modeEl && !endpoint) {
+    modeEl.textContent = "This copy of the page has no submission backend — a valid request opens your email client instead. Nothing is transmitted silently.";
+    modeEl.setAttribute("data-mode", "mailto");
   }
 
   function sentEmails() {
@@ -164,10 +167,18 @@
       sessionStorage.setItem(SENT_KEY, JSON.stringify(list));
     } catch {}
   }
-  function showStatus(kind, message) {
+  function showStatus(kind, message, link) {
     if (!statusEl) return;
     statusEl.hidden = false;
     statusEl.textContent = message;
+    if (link) {
+      statusEl.appendChild(document.createTextNode(" "));
+      var a = document.createElement("a");
+      a.href = link.href;
+      a.textContent = link.text;
+      a.style.color = "var(--accent)";
+      statusEl.appendChild(a);
+    }
     statusEl.className = "form-status is-" + kind;
   }
   function setSubmitting(on) {
@@ -191,6 +202,7 @@
       knowledgeProblem: (form.knowledgeProblem.value || "").trim(),
       willingLimitedFolder: form.willingLimitedFolder.value === "yes",
       willingChosen: form.willingLimitedFolder.value !== "",
+      intent: form.intent && form.intent.value === "demo" ? "demo" : "beta",
       website: form.website ? form.website.value : "",
     };
   }
@@ -224,6 +236,7 @@
   function mailtoFallback(v) {
     var subject = "Find Anything — access request (" + v.company + ")";
     var body = [
+      "Interested in: " + (v.intent === "demo" ? "booking a demo" : "beta access"),
       "Full name: " + v.fullName,
       "Work email: " + v.email,
       "Company: " + v.company,
@@ -241,8 +254,12 @@
   }
 
   if (form) {
+    var inFlight = false;
     form.addEventListener("submit", function (e) {
       e.preventDefault();
+      // A disabled button doesn't stop Enter-key or programmatic submits —
+      // guard the handler itself so one request is in flight at a time.
+      if (inFlight) return;
       // Honeypot: silently ignore bots.
       if (form.website && form.website.value) return;
       var v = collect();
@@ -260,6 +277,7 @@
         mailtoFallback(v);
         return;
       }
+      inFlight = true;
       setSubmitting(true);
       showStatus("info", "Submitting your request…");
       fetch(endpoint, {
@@ -276,7 +294,7 @@
           knowledgeProblem: v.knowledgeProblem,
           willingLimitedFolder: v.willingLimitedFolder,
           website: v.website,
-          intent: "beta",
+          intent: v.intent,
           startedAt: startedAt,
         }),
       })
@@ -284,7 +302,7 @@
           return res.json().catch(function () { return {}; }).then(function (body) {
             if (res.status === 202) {
               rememberEmail(v.email);
-              successCard(body.message || "Thanks. The server confirmed your request was stored. We'll review it and contact you if there's a fit for the controlled beta.");
+              successCard(body.message || "Thanks. Your request was accepted for review. We'll contact you if there's a fit for the controlled beta.");
               return;
             }
             var message = body && body.error && body.error.message
@@ -292,12 +310,17 @@
               : res.status === 429
                 ? "Too many requests right now. Please try again later."
                 : "The server couldn't save your request (HTTP " + res.status + "). Please try again.";
-            showStatus("error", message);
+            // Submissions relayed through this page share one rate-limit
+            // bucket upstream, so on 429 offer the application's own form,
+            // which is limited per visitor instead.
+            showStatus("error", message, res.status === 429 ? { href: "https://app.findanything.dev/#request-access", text: "Or submit directly on the application form →" } : null);
+            inFlight = false;
             setSubmitting(false);
           });
         })
         .catch(function () {
           showStatus("error", "Network problem — nothing was saved. Check your connection and try again.");
+          inFlight = false;
           setSubmitting(false);
         });
     });
