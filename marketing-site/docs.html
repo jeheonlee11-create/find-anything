@@ -86,7 +86,7 @@
           </div>
 
           <h2 id="coverage">Coverage accounting</h2>
-          <p>Coverage is the difference between what exists and what was read. <code>known</code> is how many in-scope sources were identified; <code>searched</code> is how many were actually retrieved; <code>excluded</code> lists what was skipped and why (permission, outage, unsupported format). Excluded sources contribute no titles, snippets, or contents.</p>
+          <p>Coverage is the difference between what is known and what was read. <code>known</code> counts sources whose existence is already recorded — inventoried during a previously authorized sync; <code>searched</code> is how many were actually retrieved; <code>excluded</code> lists what was skipped and why (authorization lost, out of scope, unavailable, unsupported format). Restricted content is never fetched, extracted, indexed, quoted, or returned, and Find Anything cannot discover files the connected account can't enumerate.</p>
           <ul>
             <li><b>Honest denominator</b> — results report 7 of 8, never "complete".</li>
             <li><b>Distinct outcomes</b> — searched, excluded (out of scope), unavailable, unsupported, and failed are separate states.</li>
@@ -100,13 +100,13 @@
 
           <h2 id="replay">Replay, receipts &amp; diffs</h2>
           <ul>
-            <li><b>Receipt</b> — an immutable record of exactly what a retrieval did.</li>
-            <li><b>Replay</b> — re-run a retrieval from its original inputs to reproduce the result.</li>
-            <li><b>Diff</b> — compare two runs to see what changed when sources change (e.g. the day Pricing Final superseded Pricing Draft).</li>
+            <li><b>Receipt</b> — a stored record of what a retrieval ran against: document-version and index snapshots, the permission context, extraction and ranking configuration versions, and the query parameters.</li>
+            <li><b>Replay</b> — re-run a stored receipt. Against unchanged inputs the result is deterministic. Replay does not promise that future runs match once documents, permissions, or software versions have changed.</li>
+            <li><b>Diff</b> — when inputs have changed, a re-run produces a comparison of the two runs (e.g. the day Pricing Final superseded Pricing Draft), not a claim of the same result.</li>
           </ul>
 
           <h2 id="boundaries">Boundaries &amp; connectors</h2>
-          <p>Google Drive is the live connector today. Everything else is labeled <b>Planned</b> and is not available yet. Find Anything only ever reads what the agent is already permitted to read.</p>
+          <p>The Google Drive integration is built and tested, working in private beta; authenticated access is pending Google restricted-scope verification. Everything else is labeled <b>Planned</b> and is not available yet. Find Anything only ever reads what the agent is already permitted to read.</p>
           <div class="callout">Everything on this documentation site is a synthetic demonstration. No real names, emails, file paths, tokens, workspace identifiers, queries, or document contents appear anywhere.</div>
           <p style="margin-top:28px"><a class="btn btn-ghost" href="index.html">← Back to overview</a></p>
         </div>

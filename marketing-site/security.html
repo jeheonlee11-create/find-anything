@@ -49,17 +49,17 @@
       </ul>
 
       <h2>Excluded means excluded</h2>
-      <p>When a source is out of scope, unavailable, or unsupported, it is counted in coverage and contributes nothing else. Its existence may be acknowledged; its contents are never surfaced.</p>
+      <p>Out-of-scope or unavailable sources are counted in coverage only when their existence is already known — recorded in inventory during a previously authorized sync. Their content is never fetched, extracted, indexed, quoted, or returned, and Find Anything cannot discover files the connected account can't enumerate. Uncertainty fails closed: if authorization is unclear or fails, content retrieval is blocked rather than attempted.</p>
 
       <h2>Auditable by construction</h2>
       <ul>
-        <li><b>Immutable receipts</b> — a durable record of exactly what a retrieval did.</li>
-        <li><b>Replay</b> — reconstruct any answer from its original inputs.</li>
-        <li><b>Diffs</b> — prove what changed between two runs when sources change.</li>
+        <li><b>Receipts</b> — a stored record of what each retrieval ran against: snapshots, permission context, configuration versions, and query parameters.</li>
+        <li><b>Replay</b> — re-run a stored receipt; unchanged inputs replay deterministically.</li>
+        <li><b>Diffs</b> — when inputs changed, a re-run produces a comparison of the two runs.</li>
       </ul>
 
       <h2>Honest capability claims</h2>
-      <p>Google Drive is the only live connector; everything else is labeled Planned. Find Anything does not claim factual correctness, universal completeness, or access to sources you have not connected.</p>
+      <p>The Google Drive integration is built and tested, working in private beta; authenticated access is pending Google restricted-scope verification. Everything else is labeled Planned. Find Anything does not claim factual correctness, universal completeness, or access to sources you have not connected.</p>
 
       <div class="callout">Responsible disclosure: security reports for the product would be handled through a dedicated channel published on the live application. This page is part of a synthetic demonstration site.</div>
 

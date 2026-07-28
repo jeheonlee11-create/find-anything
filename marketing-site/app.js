@@ -40,21 +40,45 @@
   window.addEventListener("scroll", onScroll, { passive: true });
   onScroll();
 
-  /* ---------- Mobile menu ---------- */
+  /* ---------- Mobile menu (keyboard + AT aware) ---------- */
   var navToggle = document.getElementById("navToggle");
   var navLinks = document.getElementById("navLinks");
+  var collapsed = window.matchMedia("(max-width: 940px)");
+
+  function menuOpen() {
+    return navLinks ? navLinks.classList.contains("open") : false;
+  }
+  /* Closed on a collapsed viewport → fully hidden from assistive tech.
+     Open, or on desktop where links are inline → exposed again. */
+  function syncMenuAccessibility() {
+    if (!navLinks) return;
+    var hidden = collapsed.matches && !menuOpen();
+    navLinks.setAttribute("aria-hidden", hidden ? "true" : "false");
+    if ("inert" in navLinks) navLinks.inert = hidden;
+  }
+  function setMenu(open, opts) {
+    if (!navToggle || !navLinks) return;
+    navLinks.classList.toggle("open", open);
+    navToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    navToggle.setAttribute("aria-label", open ? "Close menu" : "Open menu");
+    syncMenuAccessibility();
+    if (open) {
+      var first = navLinks.querySelector("a");
+      if (first) first.focus();
+    } else if (opts && opts.refocus) {
+      navToggle.focus();
+    }
+  }
   if (navToggle && navLinks) {
-    navToggle.addEventListener("click", function () {
-      var open = navLinks.classList.toggle("open");
-      navToggle.setAttribute("aria-expanded", open ? "true" : "false");
-      navToggle.setAttribute("aria-label", open ? "Close menu" : "Open menu");
-    });
+    navToggle.addEventListener("click", function () { setMenu(!menuOpen()); });
     navLinks.addEventListener("click", function (e) {
-      if (e.target.tagName === "A") {
-        navLinks.classList.remove("open");
-        navToggle.setAttribute("aria-expanded", "false");
-      }
+      if (e.target.tagName === "A") setMenu(false);
     });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && menuOpen()) setMenu(false, { refocus: true });
+    });
+    if (collapsed.addEventListener) collapsed.addEventListener("change", syncMenuAccessibility);
+    syncMenuAccessibility();
   }
 
   /* ---------- Reveal on scroll ---------- */
@@ -108,34 +132,174 @@
     } else { fill.style.width = to; }
   }
 
-  /* ---------- Access form (client-only demo) ---------- */
+  /* ---------- Access request form ----------
+     Endpoint comes from <meta name="fa-waitlist-endpoint">. When set (the page
+     is served from — or allowed by — the application origin) the form POSTs to
+     the real waitlist API and only claims success on the server's 202. When
+     empty (static hosting, no backend), a valid submission opens a mailto
+     request instead — never a fake success. No secrets live in this file. */
   var form = document.getElementById("accessForm");
+  var statusEl = document.getElementById("formStatus");
+  var submitBtn = document.getElementById("formSubmit");
+  var modeEl = document.getElementById("formMode");
+  var endpointMeta = document.querySelector('meta[name="fa-waitlist-endpoint"]');
+  var endpoint = endpointMeta ? endpointMeta.getAttribute("content").trim() : "";
+  var startedAt = Date.now();
+  var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  var SENT_KEY = "fa-waitlist-sent";
+  var MAILTO = "hello@findanything.dev";
+
+  if (modeEl && endpoint) {
+    modeEl.textContent = "Requests are saved by the secure application and reviewed for the controlled beta.";
+    modeEl.setAttribute("data-mode", "live");
+  }
+
+  function sentEmails() {
+    try { return JSON.parse(sessionStorage.getItem(SENT_KEY) || "[]"); } catch { return []; }
+  }
+  function rememberEmail(email) {
+    try {
+      var list = sentEmails();
+      if (list.indexOf(email) === -1) list.push(email);
+      sessionStorage.setItem(SENT_KEY, JSON.stringify(list));
+    } catch {}
+  }
+  function showStatus(kind, message) {
+    if (!statusEl) return;
+    statusEl.hidden = false;
+    statusEl.textContent = message;
+    statusEl.className = "form-status is-" + kind;
+  }
+  function setSubmitting(on) {
+    if (!submitBtn) return;
+    submitBtn.disabled = on;
+    submitBtn.textContent = on ? "Submitting…" : "Request access";
+  }
+  function collect() {
+    var tools = Array.prototype.slice
+      .call(form.querySelectorAll('input[name="knowledgeTools"]:checked'))
+      .map(function (el) { return el.value; });
+    return {
+      fullName: (form.fullName.value || "").trim(),
+      email: (form.email.value || "").trim().toLowerCase(),
+      company: (form.company.value || "").trim(),
+      jobTitle: (form.jobTitle.value || "").trim(),
+      companySize: form.companySize.value,
+      knowledgeTools: tools,
+      usesAiAgents: form.usesAiAgents.value === "yes",
+      usesAiAgentsChosen: form.usesAiAgents.value !== "",
+      knowledgeProblem: (form.knowledgeProblem.value || "").trim(),
+      willingLimitedFolder: form.willingLimitedFolder.value === "yes",
+      willingChosen: form.willingLimitedFolder.value !== "",
+      website: form.website ? form.website.value : "",
+    };
+  }
+  function validate(v) {
+    if (v.fullName.length < 2) return { message: "Please enter your full name.", el: form.fullName };
+    if (!EMAIL_RE.test(v.email)) return { message: "Please enter a valid work email address.", el: form.email };
+    if (!v.company) return { message: "Please enter your company.", el: form.company };
+    if (!v.jobTitle) return { message: "Please enter your role.", el: form.jobTitle };
+    if (!v.companySize) return { message: "Please select a company size.", el: form.companySize };
+    if (!v.usesAiAgentsChosen) return { message: "Please tell us whether your team uses AI agents.", el: form.usesAiAgents };
+    if (!v.knowledgeTools.length) return { message: "Pick at least one place your team's knowledge lives.", el: form.querySelector('input[name="knowledgeTools"]') };
+    if (v.knowledgeProblem.length < 20) return { message: "Tell us a bit more (at least 20 characters) about what your agents should trust.", el: form.knowledgeProblem };
+    if (!v.willingChosen) return { message: "Please answer the limited-folder pilot question.", el: form.willingLimitedFolder };
+    return null;
+  }
+  function successCard(message) {
+    var success = document.createElement("div");
+    success.className = "form-success";
+    success.setAttribute("role", "status");
+    success.setAttribute("tabindex", "-1");
+    var b = document.createElement("b");
+    b.textContent = "Request received";
+    var p = document.createElement("p");
+    p.style.cssText = "margin:10px 0 0;color:var(--muted)";
+    p.textContent = message;
+    success.appendChild(b);
+    success.appendChild(p);
+    form.replaceWith(success);
+    success.focus();
+  }
+  function mailtoFallback(v) {
+    var subject = "Find Anything — access request (" + v.company + ")";
+    var body = [
+      "Full name: " + v.fullName,
+      "Work email: " + v.email,
+      "Company: " + v.company,
+      "Role: " + v.jobTitle,
+      "Company size: " + v.companySize,
+      "Uses AI agents: " + (v.usesAiAgents ? "yes" : "not yet"),
+      "Knowledge lives in: " + v.knowledgeTools.join(", "),
+      "Willing to pilot with a limited Drive folder: " + (v.willingLimitedFolder ? "yes" : "no"),
+      "",
+      "What our agents should be able to trust:",
+      v.knowledgeProblem,
+    ].join("\n");
+    window.location.href = "mailto:" + MAILTO + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
+    showStatus("info", "Opened your email client with the request addressed to " + MAILTO + ". This static preview has no submission backend, so nothing was sent automatically.");
+  }
+
   if (form) {
     form.addEventListener("submit", function (e) {
       e.preventDefault();
       // Honeypot: silently ignore bots.
       if (form.website && form.website.value) return;
-      var name = (form.fullName.value || "").trim();
-      var email = (form.email.value || "").trim();
-      var valid = name.length > 0 && /.+@.+\..+/.test(email);
-      if (!valid) {
-        (name ? form.email : form.fullName).focus();
-        if (form.reportValidity) form.reportValidity();
+      var v = collect();
+      var problem = validate(v);
+      if (problem) {
+        showStatus("error", problem.message);
+        if (problem.el) problem.el.focus();
         return;
       }
-      var success = document.createElement("div");
-      success.className = "form-success";
-      success.setAttribute("role", "status");
-      success.innerHTML =
-        "<b>Request received (demo)</b><p style='margin:10px 0 0;color:var(--muted)'>Thanks, " +
-        name.replace(/[<>&]/g, "") +
-        ". This preview validated your request in-browser and sent nothing over the network. " +
-        "On the live site, the secure application takes it from here.</p>";
-      form.replaceWith(success);
-      if (success.focus) success.focus();
+      if (sentEmails().indexOf(v.email) !== -1) {
+        showStatus("info", "A request for " + v.email + " was already submitted from this browser session. We review every request — no need to send it twice.");
+        return;
+      }
+      if (!endpoint) {
+        mailtoFallback(v);
+        return;
+      }
+      setSubmitting(true);
+      showStatus("info", "Submitting your request…");
+      fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          fullName: v.fullName,
+          email: v.email,
+          company: v.company,
+          jobTitle: v.jobTitle,
+          companySize: v.companySize,
+          knowledgeTools: v.knowledgeTools,
+          usesAiAgents: v.usesAiAgents,
+          knowledgeProblem: v.knowledgeProblem,
+          willingLimitedFolder: v.willingLimitedFolder,
+          website: v.website,
+          intent: "beta",
+          startedAt: startedAt,
+        }),
+      })
+        .then(function (res) {
+          return res.json().catch(function () { return {}; }).then(function (body) {
+            if (res.status === 202) {
+              rememberEmail(v.email);
+              successCard(body.message || "Thanks. The server confirmed your request was stored. We'll review it and contact you if there's a fit for the controlled beta.");
+              return;
+            }
+            var message = body && body.error && body.error.message
+              ? body.error.message
+              : res.status === 429
+                ? "Too many requests right now. Please try again later."
+                : "The server couldn't save your request (HTTP " + res.status + "). Please try again.";
+            showStatus("error", message);
+            setSubmitting(false);
+          });
+        })
+        .catch(function () {
+          showStatus("error", "Network problem — nothing was saved. Check your connection and try again.");
+          setSubmitting(false);
+        });
     });
   }
-
-  /* ---------- Footer year ---------- */
-  // (Year is static 2026 in markup to match the demonstration context.)
 })();

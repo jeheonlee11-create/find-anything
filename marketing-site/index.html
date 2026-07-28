@@ -6,8 +6,22 @@
   <title>Find Anything — Trusted knowledge for AI agents</title>
   <meta name="description" content="Find Anything is a permission-aware retrieval control layer. It shows AI agents what they found, what they missed, where sources conflict, why one source ranked higher, and when retrieval should not be trusted." />
   <meta name="color-scheme" content="dark light" />
+  <!-- meta:start (carried into the single-file build) -->
+  <link rel="canonical" href="https://findanything.dev/" />
   <meta property="og:title" content="Find Anything — Trusted knowledge for AI agents" />
   <meta property="og:description" content="A permission-aware retrieval control layer for AI agents: citations, conflicts, coverage, confidence, and when not to trust a result." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://findanything.dev/" />
+  <meta property="og:site_name" content="Find Anything" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="Find Anything — Trusted knowledge for AI agents" />
+  <meta name="twitter:description" content="A permission-aware retrieval control layer for AI agents: citations, conflicts, coverage, confidence, and when not to trust a result." />
+  <!-- Waitlist endpoint. Leave empty on static hosting (the form falls back to
+       an honest mailto request). Set to "/api/beta/waitlist" when this page is
+       served from the application origin, or to a full URL if that origin
+       allows cross-origin requests. No secrets belong here. -->
+  <meta name="fa-waitlist-endpoint" content="" />
+  <!-- meta:end -->
   <link rel="preload" href="styles.css" as="style" />
   <link rel="stylesheet" href="styles.css" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23c8ff45'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='18' font-weight='800' text-anchor='middle' fill='%2310130f'%3EF%3C/text%3E%3C/svg%3E" />
@@ -57,14 +71,14 @@
             <a class="btn btn-primary" href="#request">Request access</a>
             <a class="btn btn-ghost" href="#conflict">See a conflict resolved</a>
           </div>
-          <p class="hero-note">Live connector: <b>Google&nbsp;Drive</b>. &nbsp;Other connectors are labeled Planned.<br>Find Anything governs <b>retrieval evidence</b> — it does not assert factual correctness or make decisions for you.</p>
+          <p class="hero-note"><b>Google&nbsp;Drive integration built and tested</b> — working in private beta; authenticated access pending Google restricted-scope verification. Other connectors are labeled Planned.<br>Find Anything governs <b>retrieval evidence</b> — it does not assert factual correctness or make decisions for you.</p>
         </div>
 
         <!-- Animated evidence panel -->
         <div class="evidence-panel reveal" aria-label="Example retrieval result">
           <div class="evidence-head">
             <span class="dot g" aria-hidden="true"></span><span class="dot a" aria-hidden="true"></span><span class="dot" aria-hidden="true"></span>
-            <span class="mono">acme-ai · retrieval receipt</span>
+            <span class="mono">acme-ai · retrieval receipt · illustrative</span>
           </div>
           <div class="evidence-body" id="evBody">
             <div class="ev-row ok" data-i="1"><span class="tick" aria-hidden="true">✓</span><span><span class="ev-name">Pricing Final.pdf</span><br><span class="ev-meta">approved · v4 · updated Jul 22</span></span><span class="ev-badge rank">rank 1 · authoritative</span></div>
@@ -177,9 +191,9 @@
           </div>
           <div class="coverage-copy reveal" data-d="1">
             <ul>
-              <li><b>Permission-scoped by design.</b> Retrieval runs inside the permissions the agent already has. Out-of-scope sources are never read.</li>
-              <li><b>Excluded, not erased.</b> The one unavailable Finance source is reported as excluded — with a reason — so the gap is visible in the answer.</li>
-              <li><b>No leakage.</b> An excluded source contributes no titles, snippets, or contents. You learn it exists and was skipped, nothing more.</li>
+              <li><b>Permission-scoped by design.</b> Retrieval runs inside the permissions the agent already has. Restricted content is never fetched, extracted, indexed, quoted, or returned.</li>
+              <li><b>Excluded, not erased.</b> Out-of-scope or unavailable sources are recorded when their existence is already known — here, the Finance file was inventoried during an earlier authorized sync and later became unavailable. The gap stays visible in the answer.</li>
+              <li><b>Fail closed.</b> Uncertain or failed authorization blocks content retrieval; it never falls through to a fetch. Find Anything cannot discover files the connected account can't enumerate.</li>
               <li><b>Honest denominator.</b> Coverage is 7 of 8, not "complete." The count is what makes the result trustworthy.</li>
             </ul>
           </div>
@@ -217,12 +231,12 @@
               <div class="trace-step"><span class="tnum">3</span><div class="tbody"><b>Conflict</b><p>Price mismatch detected between Draft and Final; both preserved and cited.</p></div></div>
             </div>
             <div class="pill-row">
-              <span class="pill"><b>Replay</b> re-run this exact retrieval</span>
-              <span class="pill"><b>Receipt</b> immutable record of what ran</span>
-              <span class="pill"><b>Diff</b> compare against the last run</span>
+              <span class="pill"><b>Receipt</b> stored record of what ran</span>
+              <span class="pill"><b>Replay</b> re-run from a stored receipt</span>
+              <span class="pill"><b>Diff</b> compare two runs</span>
               <span class="pill"><b>Trace</b> step-by-step ranking</span>
             </div>
-            <p class="hero-note" style="margin-top:22px">Replay reproduces the result from the same inputs. A diff shows what changed when a document is updated — e.g. the day Pricing Final replaced Pricing Draft as the top-ranked source.</p>
+            <p class="hero-note" style="margin-top:22px">A receipt records what a retrieval ran against: document-version and index snapshots, the permission context, extraction and ranking configuration versions, and the query parameters. Replaying a stored receipt against unchanged inputs is deterministic. When documents, permissions, or configuration have changed, a re-run produces a diff — not a claim of the same result.</p>
           </div>
         </div>
       </div>
@@ -243,10 +257,10 @@
           <article class="cap reveal" data-d="1"><div class="ci">05</div><h3>Retrieval confidence</h3><p>A clear signal for when a result is solid — and when it is not.</p></article>
           <article class="cap reveal" data-d="2"><div class="ci">06</div><h3>Coverage accounting</h3><p>What was searched vs. known to exist, including what was excluded and why.</p></article>
           <article class="cap reveal"><div class="ci">07</div><h3>Retrieval traces</h3><p>A step-by-step record of scoping, ranking, and conflict handling.</p></article>
-          <article class="cap reveal" data-d="1"><div class="ci">08</div><h3>Replay</h3><p>Re-run any retrieval from its original inputs to reproduce the result.</p></article>
-          <article class="cap reveal" data-d="2"><div class="ci">09</div><h3>Receipts</h3><p>An immutable record of exactly what a retrieval did, for audit.</p></article>
+          <article class="cap reveal" data-d="1"><div class="ci">08</div><h3>Replay</h3><p>Re-run a stored receipt. Unchanged inputs replay deterministically; changed inputs produce a diff.</p></article>
+          <article class="cap reveal" data-d="2"><div class="ci">09</div><h3>Receipts</h3><p>A stored record of what ran: snapshots, permission context, configuration versions, and query.</p></article>
           <article class="cap reveal"><div class="ci">10</div><h3>Retrieval diffs</h3><p>See what changed between runs when your sources change.</p></article>
-          <article class="cap reveal" data-d="1"><div class="ci">11</div><h3>Google Drive connector</h3><p>Live today. Additional connectors are on the roadmap and clearly labeled.</p></article>
+          <article class="cap reveal" data-d="1"><div class="ci">11</div><h3>Google Drive connector</h3><p>Built and working in private beta; authenticated access pending Google verification. Other connectors are Planned.</p></article>
           <article class="cap reveal" data-d="2"><div class="ci">＋</div><h3>Built for agents</h3><p>A single API returns the answer and all of its evidence together.</p></article>
         </div>
       </div>
@@ -306,7 +320,7 @@
           <article class="sec-card reveal"><div class="si" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 4v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V7z"/></svg></div><h3>Permission-aware retrieval</h3><p>Results never cross a permission an agent doesn't hold. Scope is enforced on every request.</p></article>
           <article class="sec-card reveal" data-d="1"><div class="si" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h16M12 4v16"/></svg></div><h3>No content in logs</h3><p>Traces and receipts record what ran and why — not the private contents of your documents.</p></article>
           <article class="sec-card reveal" data-d="2"><div class="si" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V7a6 6 0 1 1 12 0v2M5 9h14v11H5z"/></svg></div><h3>Excluded stays excluded</h3><p>An out-of-scope source contributes nothing to a result — not even its title or a snippet.</p></article>
-          <article class="sec-card reveal" data-d="3"><div class="si" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 5-4 8-8 10-4-2-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg></div><h3>Auditable by construction</h3><p>Receipts are immutable and replayable, so any answer can be reconstructed and reviewed.</p></article>
+          <article class="sec-card reveal" data-d="3"><div class="si" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 5-4 8-8 10-4-2-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg></div><h3>Auditable by construction</h3><p>Receipts store what each retrieval ran against. Unchanged inputs replay deterministically; changed inputs produce a reviewable diff.</p></article>
         </div>
       </div>
     </section>
@@ -316,11 +330,11 @@
       <div class="shell">
         <div class="sec-head reveal">
           <span class="eyebrow">Connectors</span>
-          <h2>Live today. Honest about the rest.</h2>
-          <p>Google Drive is available now. Everything else is labeled Planned — we don't claim integrations we haven't shipped.</p>
+          <h2>Built today. Honest about the rest.</h2>
+          <p>The Google Drive integration is built and tested, working in private beta while authenticated access awaits Google's restricted-scope verification. Everything else is labeled Planned — we don't claim integrations we haven't shipped.</p>
         </div>
         <div class="conn-grid">
-          <div class="conn live reveal"><b>Google Drive</b><span class="status">● Available</span></div>
+          <div class="conn live reveal"><b>Google Drive</b><span class="status">● Private beta</span></div>
           <div class="conn reveal" data-d="1"><b>Slack</b><span class="status">○ Planned</span></div>
           <div class="conn reveal" data-d="2"><b>Notion</b><span class="status">○ Planned</span></div>
           <div class="conn reveal" data-d="3"><b>Confluence</b><span class="status">○ Planned</span></div>
@@ -339,8 +353,8 @@
           <div class="cta-copy reveal">
             <span class="eyebrow">Request access</span>
             <h2>Give your agents knowledge they can defend.</h2>
-            <p>Find Anything is in private access. Tell us about your knowledge and your agents, and we'll be in touch.</p>
-            <p class="hero-note">This preview form is a demonstration — it validates in your browser and does not transmit anything. On the product site, requests are handled by the secure application.</p>
+            <p>Find Anything is a controlled private beta. Tell us about your knowledge and your agents, and we'll review the fit.</p>
+            <p class="hero-note" id="formMode" data-mode="mailto">This static preview has no submission backend configured — a valid request opens your email client instead. Nothing is transmitted silently.</p>
           </div>
           <form class="form reveal" data-d="1" id="accessForm" novalidate>
             <div class="form-row">
@@ -348,15 +362,53 @@
               <label>Work email <input name="email" type="email" autocomplete="email" required placeholder="ada@company.com" /></label>
             </div>
             <div class="form-row">
-              <label>Company <input name="company" type="text" autocomplete="organization" placeholder="Northwind Legal" /></label>
-              <label>Role <input name="role" type="text" autocomplete="organization-title" placeholder="Head of Knowledge" /></label>
+              <label>Company <input name="company" type="text" autocomplete="organization" required placeholder="Northwind Legal" /></label>
+              <label>Role <input name="jobTitle" type="text" autocomplete="organization-title" required placeholder="Head of Knowledge" /></label>
             </div>
-            <label>What should your agents be able to trust?
-              <textarea name="need" placeholder="e.g. Our team keeps contracts in Google Drive and our assistant keeps citing outdated drafts."></textarea>
+            <div class="form-row">
+              <label>Company size
+                <select name="companySize" required>
+                  <option value="">Select…</option>
+                  <option value="1-10">1–10</option>
+                  <option value="11-50">11–50</option>
+                  <option value="51-200">51–200</option>
+                  <option value="201-1000">201–1,000</option>
+                  <option value="1001+">1,001+</option>
+                </select>
+              </label>
+              <label>Does your team use AI agents today?
+                <select name="usesAiAgents" required>
+                  <option value="">Select…</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">Not yet</option>
+                </select>
+              </label>
+            </div>
+            <fieldset>
+              <legend>Where does your team's knowledge live? <span class="hint-inline">(pick at least one)</span></legend>
+              <div class="checks">
+                <label><input type="checkbox" name="knowledgeTools" value="Google Drive" /> Google Drive</label>
+                <label><input type="checkbox" name="knowledgeTools" value="Slack" /> Slack</label>
+                <label><input type="checkbox" name="knowledgeTools" value="Notion" /> Notion</label>
+                <label><input type="checkbox" name="knowledgeTools" value="Microsoft 365" /> Microsoft 365</label>
+                <label><input type="checkbox" name="knowledgeTools" value="GitHub" /> GitHub</label>
+                <label><input type="checkbox" name="knowledgeTools" value="Other" /> Other</label>
+              </div>
+            </fieldset>
+            <label>What should your agents be able to trust? <span class="hint-inline">(a sentence or two)</span>
+              <textarea name="knowledgeProblem" required minlength="20" placeholder="e.g. Our team keeps contracts in Google Drive and our assistant keeps citing outdated drafts."></textarea>
+            </label>
+            <label>Willing to pilot with a limited Drive folder?
+              <select name="willingLimitedFolder" required>
+                <option value="">Select…</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
             </label>
             <label class="hp" aria-hidden="true">Leave this field empty <input name="website" tabindex="-1" autocomplete="off" /></label>
             <p class="hint">We use synthetic data everywhere on this site. Real requests never include document contents.</p>
-            <button class="btn btn-primary" type="submit" style="justify-content:center">Request access</button>
+            <p class="form-status" id="formStatus" role="status" aria-live="polite" hidden></p>
+            <button class="btn btn-primary" type="submit" id="formSubmit" style="justify-content:center">Request access</button>
           </form>
         </div>
       </div>

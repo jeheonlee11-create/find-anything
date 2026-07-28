@@ -83,10 +83,13 @@ body = rewriteLinks(body).replace(/<\/main>/i, "</main>\n" + rewriteLinks(viewMa
 const title = (index.match(/<title>([\s\S]*?)<\/title>/i) || [, "Find Anything"])[1];
 const desc = (index.match(/<meta name="description" content="([^"]*)"/i) || [, ""])[1];
 const favicon = (index.match(/<link rel="icon"[^>]*>/i) || [""])[0];
+// Canonical/OG/Twitter/waitlist-endpoint tags marked in index.html's head.
+const metaBlock = (index.match(/<!-- meta:start[\s\S]*?meta:end -->/i) || [""])[0];
 
 const head = `<title>${title}</title>
 <meta name="description" content="${desc}" />
 <meta name="color-scheme" content="dark light" />
+${metaBlock}
 ${favicon}
 <style>
 ${css}

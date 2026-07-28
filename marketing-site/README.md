@@ -46,9 +46,32 @@ python3 -m http.server 8787 --bind 127.0.0.1
 - Every example uses **synthetic Acme AI** data. No real names, emails, file
   paths, tokens, workspace IDs, queries, or document contents appear anywhere.
 - No claims of factual correctness, universal completeness, or unsupported
-  integrations. Planned connectors are labeled Planned.
-- The request-access form is a **client-only demonstration**: it validates in
-  the browser and transmits nothing.
+  integrations. Planned connectors are labeled Planned. Google Drive is
+  described as built and working in private beta, pending Google
+  restricted-scope verification — never as publicly available.
+- The hero receipt animation is labeled **illustrative**.
+
+## Access-request form
+
+The form targets the application's real waitlist API
+(`POST /api/beta/waitlist` — see `app/api/beta/waitlist/route.ts`) and only
+claims success when the server returns its 202 confirmation. States covered:
+inline validation, submitting (button disabled), server-confirmed success,
+server error (400/413/429/503 messages), network error, and a same-session
+duplicate guard (the API itself hides duplicates from the client by design).
+
+Activation is one attribute — no secrets are involved:
+
+```html
+<meta name="fa-waitlist-endpoint" content="/api/beta/waitlist" />
+```
+
+- Serve the page from the application origin and use the relative path above, or
+- set a full URL if the app origin explicitly allows cross-origin requests.
+
+When the meta value is **empty** (static hosting with no backend), the form
+does not pretend: a valid submission opens a prefilled **mailto** to
+`hello@findanything.dev` and says exactly that.
 
 ## Verified during build
 - Desktop (dark + light) and mobile 375px visually inspected via the browser.
