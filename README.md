@@ -69,8 +69,9 @@ Plain local vinext does not emulate the Sites identity headers or production D1 
 ## Google OAuth production setup
 
 - Attach and activate a custom domain in Sites before registering the production callback with Google.
-- Planned custom-domain callback: `https://app.findanything.dev/api/connectors/google-drive/callback`.
-- Configure the production `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, exact custom-domain `GOOGLE_REDIRECT_URI`, and `TOKEN_ENCRYPTION_KEY` as hosted server secrets.
+- The site and the product share one origin. The production callback is `<NEXT_PUBLIC_SITE_URL>/api/connectors/google-drive/callback` — for the planned domain, `https://findanything.dev/api/connectors/google-drive/callback`.
+- `GOOGLE_REDIRECT_URI` is optional in production: when unset it derives from `NEXT_PUBLIC_SITE_URL`. Setting it explicitly always wins.
+- Configure the production `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `TOKEN_ENCRYPTION_KEY` as hosted server secrets.
 - Because `drive.readonly` is restricted, complete Google verification and any required security assessment before public use.
 
 See [Week 1 scope](docs/MVP_SCOPE.md), [Google Drive setup](docs/google-drive-mvp.md), and [manual setup](MANUAL_SETUP.md).
