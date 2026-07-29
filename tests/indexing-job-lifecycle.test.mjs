@@ -76,11 +76,12 @@ test("a failed follow-up schedule rejects instead of looking active", async () =
 });
 
 test("job persistence, stale recovery, and cross-request continuation stay wired", async () => {
-  const [jobs, worker, dashboard, workspaceRoute, dueRoute, executeRoute, queueWorker, logging] = await Promise.all([
+  const [jobs, worker, dashboard, workspaceRoute, advanceRoute, dueRoute, executeRoute, queueWorker, logging] = await Promise.all([
     readFile(new URL("../lib/indexing/jobs.ts", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/components/workspace-dashboard.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/workspaces/[workspaceId]/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/workspaces/[workspaceId]/indexing/advance/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/internal/indexing/queue/due/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/internal/indexing/queue/execute/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../queue-worker/src/index.ts", import.meta.url), "utf8"),
@@ -98,12 +99,14 @@ test("job persistence, stale recovery, and cross-request continuation stay wired
   assert.match(dashboard, /Indexing \$\{job\.processedCount\} of \$\{job\.discoveredCount\} files/);
   assert.match(dashboard, /remaining/);
   assert.match(dashboard, /unsupportedCount/);
-  assert.match(dashboard, /setInterval\(\(\) => void load\(true\), 1500\)/);
+  assert.match(dashboard, /indexing\/advance/);
+  assert.match(dashboard, /3000/);
   assert.doesNotMatch(dashboard, /router\.refresh\(/);
   assert.doesNotMatch(dashboard, /location\.reload\(/);
-  assert.match(workspaceRoute, /isIndexingJobStale/);
-  assert.match(workspaceRoute, /enqueueIndexingJob/);
-  assert.match(workspaceRoute, /x-find-anything-continuation-sequence/);
+  assert.doesNotMatch(workspaceRoute, /enqueueIndexingJob/);
+  assert.match(advanceRoute, /isIndexingJobStale/);
+  assert.match(advanceRoute, /enqueueIndexingJob/);
+  assert.match(advanceRoute, /x-find-anything-continuation-sequence/);
   assert.match(dueRoute, /leaseDueIndexingContinuations/);
   assert.match(executeRoute, /claimQueueContinuationExecution/);
   assert.match(executeRoute, /queueClaimed: true/);

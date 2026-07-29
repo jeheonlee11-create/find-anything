@@ -1,6 +1,6 @@
 /* eslint-disable react-hooks/set-state-in-effect -- loading state is synchronized with an external API request */
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { WorkspaceSearch } from "@/app/components/workspace-search";
 import { WorkspaceCoverageMap } from "@/app/components/workspace-coverage-map";
@@ -68,6 +68,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
     [data, setData] = useState<Dashboard | null>(null),
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
+    advancing = useRef(false),
     [acknowledgement, setAcknowledgement] = useState(""),
     [error, setError] = useState("");
   const load = useCallback(async (background = false) => {
@@ -107,9 +108,20 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
   }, [load]);
   useEffect(() => {
     if (!data || !isActiveJob(data.indexingJob?.status)) return;
-    const timer = window.setInterval(() => void load(true), 1500);
+    const timer = window.setInterval(() => {
+      if (advancing.current) return;
+      advancing.current = true;
+      void fetch(
+        `/api/workspaces/${encodeURIComponent(workspaceId)}/indexing/advance`,
+        { method: "POST" },
+      )
+        .then(() => load(true))
+        .finally(() => {
+          advancing.current = false;
+        });
+    }, 3000);
     return () => window.clearInterval(timer);
-  }, [data, load]);
+  }, [data, load, workspaceId]);
   async function connect() {
     setBusy(true);
     setError("");
