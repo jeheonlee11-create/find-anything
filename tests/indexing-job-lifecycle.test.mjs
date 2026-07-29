@@ -98,7 +98,7 @@ test("job persistence, stale recovery, and cross-request continuation stay wired
   assert.match(dashboard, /Indexing \$\{job\.processedCount\} of \$\{job\.discoveredCount\} files/);
   assert.match(dashboard, /remaining/);
   assert.match(dashboard, /unsupportedCount/);
-  assert.match(dashboard, /setInterval\(\(\) => void load\(true\), 5000\)/);
+  assert.match(dashboard, /setInterval\(\(\) => void load\(true\), 1500\)/);
   assert.doesNotMatch(dashboard, /router\.refresh\(/);
   assert.doesNotMatch(dashboard, /location\.reload\(/);
   assert.match(workspaceRoute, /isIndexingJobStale/);

@@ -73,7 +73,7 @@ Nothing in this section has been performed.
 
 The simulation deliberately terminates the originating request after
 persisting a continuation. A later scheduled reconcile drains that row without
-a browser, processes 1,294 files in bounded four-file batches, and executes
+a browser, processes 1,294 files in bounded ten-file batches, and executes
 each sequence exactly once. It also covers lost responses, duplicate
 deliveries, stale execution leases, send failures, discovery and indexing
 crashes, OAuth expiry, revoked permissions, zero accessible files, DLQ

@@ -38,7 +38,7 @@ export interface StoredConnector {
   tokenExpiresAt: string | null;
 }
 const SYNC_TOTAL_BUDGET_MS = 12_000;
-const SYNC_BATCH_SIZE = 4;
+const SYNC_BATCH_SIZE = 10;
 const UNSUPPORTED_BATCH_SIZE = 20;
 const refreshesInFlight = new Map<string, Promise<string>>();
 export type DriveSyncProgress = {

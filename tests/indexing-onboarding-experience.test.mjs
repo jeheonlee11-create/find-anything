@@ -112,7 +112,7 @@ test("OAuth, pagination, crash recovery, refresh, and click idempotency remain w
   assert.match(dashboard, /Discovering files…/);
   assert.doesNotMatch(dashboard, /discoveredCount \|\| "\?"/);
   assert.doesNotMatch(dashboard, /for \(let poll/);
-  assert.match(dashboard, /setInterval\(\(\) => void load\(true\), 5000\)/);
+  assert.match(dashboard, /setInterval\(\(\) => void load\(true\), 1500\)/);
   assert.doesNotMatch(dashboard, /router\.refresh\(/);
   assert.doesNotMatch(dashboard, /location\.reload\(/);
   assert.match(callback, /oauth_authorization_succeeded/);

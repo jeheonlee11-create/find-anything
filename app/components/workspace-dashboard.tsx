@@ -107,7 +107,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
   }, [load]);
   useEffect(() => {
     if (!data || !isActiveJob(data.indexingJob?.status)) return;
-    const timer = window.setInterval(() => void load(true), 5000);
+    const timer = window.setInterval(() => void load(true), 1500);
     return () => window.clearInterval(timer);
   }, [data, load]);
   async function connect() {
