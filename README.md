@@ -78,12 +78,18 @@ See [Week 1 scope](docs/MVP_SCOPE.md), [Google Drive setup](docs/google-drive-mv
 
 ## Routes
 
-- `/` — product site and sample retrieval playground
+The public site and the authenticated product share one origin: public pages at
+`/`, the product under `/app`. See [the unified product site](docs/UNIFIED_PRODUCT_SITE.md).
+
+- `/` — product site, with **Connect Google Drive** as its primary action
+- `/connect` — the one entry point: platform identity, then the invite gate, then workspace, then Drive OAuth
+- `/beta/access-required` — honest invite-only fallback and the real request-access form
+- `/settings` — authenticated account, workspace, and Drive settings including disconnect-and-delete
 - `/docs` — REST and proposed MCP contracts
 - `/trust` — current and planned trust, privacy, and security controls
 - `/pricing`, `/privacy`, `/terms`, `/support`, `/status` — public beta-preparation surfaces
-- `/app` — safe synthetic onboarding and workspace shell
 - `/app` — authenticated workspace creation and listing
+- `/workspaces`, `/workspaces/:workspaceId` — compatibility redirects into `/app`
 - `/app/workspaces/:workspaceId` — member-authorized Drive connection, indexing status, and file inventory
 - `/api/workspaces` — authenticated workspace list/create
 - `/api/workspaces/:workspaceId` — member-authorized workspace dashboard data
@@ -102,6 +108,9 @@ See [Week 1 scope](docs/MVP_SCOPE.md), [Google Drive setup](docs/google-drive-mv
 
 ## Production plans
 
+- [The unified product site](docs/UNIFIED_PRODUCT_SITE.md) — invite-only operation, the connect journey, required production environment values
+- [Founder Google Console actions](docs/FOUNDER_GOOGLE_CONSOLE_ACTIONS.md) — manual, human-only steps
+- [Custom-domain cutover and rollback](docs/CUSTOM_DOMAIN_CUTOVER.md)
 - [Google Drive MVP](docs/google-drive-mvp.md)
 - [Custom-domain setup](docs/custom-domain-setup.md)
 - [Retrieval architecture](docs/retrieval-architecture.md)

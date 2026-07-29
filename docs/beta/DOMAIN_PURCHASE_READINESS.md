@@ -13,9 +13,9 @@
 
 ### Requires the custom domain
 
-- `NEXT_PUBLIC_SITE_URL`
-- `NEXT_PUBLIC_APP_URL`
-- `GOOGLE_REDIRECT_URI`
+- `NEXT_PUBLIC_SITE_URL` — the single source of truth. The product is served at
+  `/app` on this same origin, and the Google redirect URI derives from it.
+- `GOOGLE_REDIRECT_URI` — optional. Only set it to override the derived value.
 - Google Cloud authorized JavaScript origin and redirect-URI entries
 
 ### Configure after rotating Google credentials
@@ -27,7 +27,7 @@
 
 - `SUPPORT_EMAIL`
 - `PRIVACY_EMAIL`
-- `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_DOCS_URL`, and `NEXT_PUBLIC_MCP_URL` when separate subdomains exist
+- `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_DOCS_URL`, and `NEXT_PUBLIC_MCP_URL` — each defaults to `NEXT_PUBLIC_SITE_URL`; set one only if that surface genuinely moves to its own hostname
 - `APP_VERSION` for feedback and diagnostic attribution
 
 ### Legacy and removable
@@ -42,20 +42,26 @@ Enable Google Drive API, Google Docs API, Google Sheets API, and Google Slides A
 
 `http://localhost:3000/api/connectors/google-drive/callback`
 
-After the domain is active, add:
+After the domain is active, add (the site and the product share one origin, so
+there is no separate app hostname):
 
-- Authorized origin: `https://app.findanything.dev`
-- Authorized redirect: `https://app.findanything.dev/api/connectors/google-drive/callback`
+- Authorized origin: `https://findanything.dev`
+- Authorized redirect: `https://findanything.dev/api/connectors/google-drive/callback`
 
-The consent screen must identify Find Anything, list accurate privacy/support contacts, declare the read-only scopes, and include each private-beta Google account as a test user while the app remains in testing mode.
+The consent screen must identify Find Anything, list accurate privacy/support contacts, declare the read-only scope, and include each private-beta Google account as a test user while the app remains in testing mode. Google has not verified or approved the application; restricted-scope verification is pending. The full founder-only checklist is in [FOUNDER_GOOGLE_CONSOLE_ACTIONS.md](../FOUNDER_GOOGLE_CONSOLE_ACTIONS.md).
 
 ## Post-purchase sequence
 
-1. Attach `app.findanything.dev` to the existing Sites project—do not create a new project.
-2. Add the exact CNAME and validation records returned by Sites.
+`findanything.dev` is currently served by a separate Cloudflare Pages project
+built from `marketing-site/`, so this is a release-and-reattach operation. The
+precise, ordered sequence with verification and rollback lives in
+[CUSTOM_DOMAIN_CUTOVER.md](../CUSTOM_DOMAIN_CUTOVER.md). In outline:
+
+1. Release `findanything.dev` from the Pages project, then attach it to the existing Sites project—do not create a new project.
+2. Add the exact records returned by Sites.
 3. Wait until Sites reports the domain and TLS certificate active.
-4. Update the three domain-dependent environment values.
+4. Set `NEXT_PUBLIC_SITE_URL`; leave the other public URL overrides unset.
 5. Add the custom origin and callback in Google Cloud while keeping localhost temporarily.
-6. Set the rotated Google client ID and secret as hosted secrets.
+6. Set the Google client ID and secret as hosted secrets.
 7. Redeploy the existing project privately.
-8. Verify readiness, sign-in, OAuth, Docs/Sheets/Slides indexing, literal search, traces, receipts, disconnect, second-user isolation, permission removal, deleted-file cleanup, and revoked-token fail-closed behavior.
+8. Verify readiness, sign-in, the `/connect` journey for approved and unapproved accounts, OAuth, Docs/Sheets/Slides indexing, literal search, traces, receipts, disconnect, second-user isolation, permission removal, deleted-file cleanup, and revoked-token fail-closed behavior.
