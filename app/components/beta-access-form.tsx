@@ -6,8 +6,13 @@ export function BetaAccessForm() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setState("submitting");
     const form = new FormData(event.currentTarget), response = await fetch("/api/beta/waitlist", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fullName: form.get("fullName"), email: form.get("email"), company: form.get("company"), jobTitle: form.get("jobTitle"), companySize: form.get("companySize"), knowledgeTools: form.getAll("knowledgeTools"), usesAiAgents: form.get("usesAiAgents") === "yes", knowledgeProblem: form.get("knowledgeProblem"), willingLimitedFolder: form.get("willingLimitedFolder") === "yes", website: form.get("website"), intent: "beta", startedAt }) });
-    const result = await response.json().catch(() => ({})) as { message?: string; error?: { message?: string } };
-    setMessage(response.ok ? result.message ?? "Request received." : result.error?.message ?? "Please try again later."); setState(response.ok ? "success" : "error");
+    const result = await response.json().catch(() => ({})) as { submitted?: boolean; saved?: boolean; message?: string; error?: { message?: string } };
+    // Success is claimed only when the server confirms persistence with
+    // `saved: true` on its 202. A 2xx alone is not enough: the bot-trap branch
+    // also answers 202, and an accepted-but-unsaved request must never be shown
+    // as stored. Nothing here reports whether this email was already known.
+    const saved = response.status === 202 && result.saved === true;
+    setMessage(saved ? result.message ?? "Request received." : result.error?.message ?? "We could not confirm your request was saved. Please try again."); setState(saved ? "success" : "error");
   }
   if (state === "success") return <div className="marketing-success" role="status"><h3>Request received.</h3><p>{message}</p></div>;
   return <form className="marketing-form" onSubmit={submit}>

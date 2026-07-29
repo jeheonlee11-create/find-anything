@@ -36,7 +36,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: { code: "RATE_LIMITED", message: "Too many requests were submitted. Please try again later." } }, { status: 429, headers: { "retry-after": "3600" } });
     const result = await saveBetaAccessRequest({ email, fullName, company, jobTitle, companySize, knowledgeTools, usesAiAgents: body.usesAiAgents, knowledgeProblem, willingLimitedFolder: body.willingLimitedFolder, intent: intent as "beta" | "demo" });
     await recordBetaEvent({ actorId: key, event: "beta_request_submitted", properties: { intent, duplicate: !result.created } });
-    return NextResponse.json({ submitted: true, message: "Thanks. We’ll review your request and contact you if there is a fit for the controlled beta." }, { status: 202, headers: { "cache-control": "no-store" } });
+    // `saved` is the only signal a client may treat as persistence confirmation.
+    // It is set solely after the write above returned. The bot-trap branch and
+    // every failure branch omit it, so no interface can claim a request was
+    // stored unless it really was. A repeat submission updates the existing row
+    // and is reported identically, so the response never discloses whether this
+    // email had already asked.
+    return NextResponse.json({ submitted: true, saved: true, message: "Thanks. We’ll review your request and contact you if there is a fit for the controlled beta." }, { status: 202, headers: { "cache-control": "no-store" } });
   } catch {
     return NextResponse.json({ error: { code: "SUBMISSION_UNAVAILABLE", message: "We couldn’t save your request. Please try again later." } }, { status: 503 });
   }
