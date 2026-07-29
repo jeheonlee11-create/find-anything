@@ -47,6 +47,13 @@ export interface WorkspaceSearchResult {
   modifiedAt: string;
   sourceUrl: string | null;
   indexStatus: string;
+  /**
+   * `content` — the file's extracted text was searched.
+   * `name_only` — only its name/path/MIME were searched because its content
+   * has not been extracted yet. Never carries a snippet or a citation, so a
+   * name-only hit can never imply content was read.
+   */
+  matchScope: "content" | "name_only";
   explanation: string[];
   snippet: string | null;
   score: number;
@@ -105,8 +112,13 @@ export interface WorkspaceSearchResponse {
   };
   coverage: {
     totalKnownFiles: number;
+    /** Files whose extracted CONTENT was searched. */
     filesSearched: number;
+    /** Files matched on name/path/MIME only, because content is not indexed. */
+    nameOnlyFilesSearched: number;
     indexedFiles: number;
+    /** Name-searchable rows whose content has never been extracted. */
+    metadataOnlyFiles: number;
     failedFiles: number;
     pendingFiles: number;
     unsupportedFiles: number;
@@ -237,6 +249,15 @@ export function searchWorkspaceFiles(input: {
   const indexedEligible = eligible.filter(
     (file) => file.indexStatus === "indexed",
   );
+  // Stage 1 of the pipeline makes every discovered file name-searchable before
+  // any extraction, which is what the dashboard's "Searchable by name (N)"
+  // claim counts. Those rows are matched here on name/path/MIME ONLY — content
+  // and phrase-in-content matching still require extracted text — so the claim
+  // is true rather than cosmetic.
+  const metadataEligible = eligible.filter(
+    (file) => file.indexStatus === "metadata",
+  );
+  const searchableEligible = [...indexedEligible, ...metadataEligible];
   const retrievedAt = new Date().toISOString();
   const candidateCounts = {
     keyword: 0,
@@ -257,10 +278,11 @@ export function searchWorkspaceFiles(input: {
   }> = [];
   const excludedResults: Array<{ fileId: string; reason: string }> = [];
 
-  const matches = indexedEligible.flatMap((file) => {
+  const matches = searchableEligible.flatMap((file) => {
+    const nameOnly = file.indexStatus !== "indexed";
     const normalizedName = normalize(file.name);
     const normalizedMime = normalize(file.mimeType);
-    const content = file.units.map((unit) => unit.text).join("\n");
+    const content = nameOnly ? "" : file.units.map((unit) => unit.text).join("\n");
     const normalizedContent = normalize(content);
     const normalizedHeadings = normalize(file.units.filter((unit) => /heading|title/i.test(unit.unitType)).map((unit) => unit.text).join("\n"));
     const searchable = `${normalizedName}\n${normalizedMime}\n${normalizedContent}`;
@@ -281,8 +303,20 @@ export function searchWorkspaceFiles(input: {
       thresholdDecisions.push({
         fileId: file.id,
         decision: "excluded",
-        reason:
-          "not every normalized query term matched indexed text or metadata",
+        reason: nameOnly
+          ? "content is not indexed yet and not every query term matched the file name or type"
+          : "not every normalized query term matched indexed text or metadata",
+      });
+      excludedResults.push({ fileId: file.id, reason: "matching policy" });
+      return [];
+    }
+    // A name-only row with no query terms is not a claim of anything: an empty
+    // query must not surface files whose content has never been read.
+    if (nameOnly && !terms.length) {
+      thresholdDecisions.push({
+        fileId: file.id,
+        decision: "excluded",
+        reason: "content is not indexed yet and no query terms were supplied",
       });
       excludedResults.push({ fileId: file.id, reason: "matching policy" });
       return [];
@@ -291,10 +325,14 @@ export function searchWorkspaceFiles(input: {
     thresholdDecisions.push({
       fileId: file.id,
       decision: "included",
-      reason: "all normalized query terms matched",
+      reason: nameOnly
+        ? "all normalized query terms matched the file name or type; content is not indexed yet"
+        : "all normalized query terms matched",
     });
 
     const explanation: string[] = [];
+    if (nameOnly)
+      explanation.push("name match (content not indexed yet)");
     let score = 0;
     const scoreBreakdown = { title: 0, filename: 0, mimeType: 0, content: 0 };
     if (!terms.length) {
@@ -384,8 +422,12 @@ export function searchWorkspaceFiles(input: {
         modifiedAt: file.modifiedAt,
         sourceUrl: file.webViewLink,
         indexStatus: file.indexStatus,
+        matchScope: (nameOnly ? "name_only" : "content") as
+          | "content"
+          | "name_only",
         explanation: [...new Set(explanation)],
-        snippet: makeSnippet(content, terms),
+        // No content was read, so there is nothing honest to excerpt.
+        snippet: nameOnly ? null : makeSnippet(content, terms),
         score,
         scoreBreakdown,
         ranking,
@@ -444,6 +486,11 @@ export function searchWorkspaceFiles(input: {
   const indexedFiles = workspaceFiles.filter(
     (file) => file.indexStatus === "indexed",
   ).length;
+  // Kept strictly distinct from `indexedFiles`: these rows are name-searchable
+  // only, their content has never been read.
+  const metadataOnlyFiles = workspaceFiles.filter(
+    (file) => file.indexStatus === "metadata",
+  ).length;
   const paginationComplete =
       input.permissionContext?.paginationComplete ?? true,
     incompleteReasons = [
@@ -452,6 +499,9 @@ export function searchWorkspaceFiles(input: {
         : null,
       failedFiles ? `${failedFiles} files failed indexing.` : null,
       pendingFiles ? `${pendingFiles} files are pending indexing.` : null,
+      metadataOnlyFiles
+        ? `${metadataOnlyFiles} files are searchable by name only; their content is not indexed yet.`
+        : null,
       unsupportedFiles
         ? `${unsupportedFiles} files were skipped because their format is unsupported.`
         : null,
@@ -460,7 +510,9 @@ export function searchWorkspaceFiles(input: {
   const coverage: WorkspaceSearchResponse["coverage"] = {
     totalKnownFiles: workspaceFiles.length,
     filesSearched: indexedEligible.length,
+    nameOnlyFilesSearched: metadataEligible.length,
     indexedFiles,
+    metadataOnlyFiles,
     failedFiles,
     pendingFiles,
     unsupportedFiles,

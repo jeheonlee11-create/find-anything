@@ -184,8 +184,23 @@ export function WorkspaceSearch({ workspaceId, demoMode = false }: { workspaceId
                   <div className="result-body">
                     <div className="result-heading"><span className="file-kind">{fileKind(result.mimeType)}</span><div><h3>{highlight(result.name, data.query)}</h3><small>{result.mimeType}</small></div></div>
                     <p>
-                      <b>{result.matchType} match</b> ·{" "}
-                      {result.ranking.conciseExplanation}
+                      <b>
+                        {result.matchScope === "name_only"
+                          ? "name-only"
+                          : result.matchType}{" "}
+                        match
+                      </b>
+                      {result.matchScope === "name_only" && (
+                        <>
+                          {" "}
+                          ·{" "}
+                          <span className="name-only-match">
+                            matched on file name and type; content is not
+                            indexed yet
+                          </span>
+                        </>
+                      )}{" "}
+                      · {result.ranking.conciseExplanation}
                     </p>
                     <details className="citation-preview">
                       <summary>Why this result?</summary>

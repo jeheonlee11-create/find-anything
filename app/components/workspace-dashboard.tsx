@@ -60,6 +60,7 @@ type Dashboard = {
     unchangedCount: number;
     duplicateCount: number;
     retriedCount: number;
+    oversizedCount: number;
     lastErrorCode: string | null;
     terminalReason: string | null;
     heartbeatAt: string | null;
@@ -376,6 +377,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
                 <div><dt>Files skipped</dt><dd>{job.skippedCount}</dd></div>
                 <div><dt>Files unavailable</dt><dd>{job.inaccessibleCount}</dd></div>
                 <div><dt>Files failed</dt><dd>{job.failedCount}</dd></div>
+                <div><dt>Files too large to extract</dt><dd>{job.oversizedCount}</dd></div>
                 <div><dt>Retries attempted</dt><dd>{job.retriedCount}</dd></div>
                 {job.lastErrorCode && <div><dt>Error code</dt><dd>{job.lastErrorCode}</dd></div>}
               </dl>

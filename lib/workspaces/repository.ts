@@ -174,6 +174,7 @@ export async function workspaceDashboard(actorId: string, workspaceId: string) {
           unchangedCount: indexingJobs.unchangedCount,
           duplicateCount: indexingJobs.duplicateCount,
           retriedCount: indexingJobs.retriedCount,
+          oversizedCount: indexingJobs.oversizedCount,
           lastErrorCode: indexingJobs.lastErrorCode,
           terminalReason: indexingJobs.terminalReason,
           heartbeatAt: indexingJobs.heartbeatAt,
