@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, count, desc, eq, lt, sql } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { getDb } from "@/db";
 import {
@@ -20,19 +20,31 @@ import {
   isStaleSync,
   reconcileInterruptedRun,
 } from "@/lib/google-drive/sync-lifecycle";
+import { D1_MAX_STATEMENTS_PER_BATCH } from "@/lib/indexing/d1-limits";
+import type { SubrequestBudget } from "@/lib/indexing/subrequest-budget";
+import {
+  discoveredMetadataStatements,
+  extractedFileStatements,
+  metadataRefreshStatements,
+  retryAttemptStatements,
+  type SqliteStatement,
+  type StatementDb,
+} from "@/lib/google-drive/statement-builders";
 export function actorWorkspaceId(actorId: string) {
   return `ws_${actorId.slice("actor_".length)}`;
 }
 // Cloudflare D1 batches stay well under platform limits: at most 40 statements
-// per db.batch and at most ~100 bound parameters per statement.
-export const DB_BATCH_MAX_STATEMENTS = 40;
-const METADATA_ROWS_PER_STATEMENT = 3;
-const UNIT_ROWS_PER_STATEMENT = 12;
-const RETRY_IDS_PER_STATEMENT = 90;
+// per db.batch and at most 99 bound parameters per statement. Multi-row
+// statement sizing lives in lib/indexing/d1-limits.ts and is derived from
+// db/schema.ts, so a new column shrinks the chunk instead of overflowing.
+export const DB_BATCH_MAX_STATEMENTS = D1_MAX_STATEMENTS_PER_BATCH;
 type SqliteBatch = [BatchItem<"sqlite">, ...BatchItem<"sqlite">[]];
+/** Every D1 round trip is a Workers subrequest; charge the hop budget for it. */
+type BudgetOption = { budget?: Pick<SubrequestBudget, "spend"> };
 async function runBatchChunks(
   db: Awaited<ReturnType<typeof getDb>>,
-  statements: BatchItem<"sqlite">[],
+  statements: SqliteStatement[],
+  budget?: Pick<SubrequestBudget, "spend">,
 ) {
   for (
     let offset = 0;
@@ -40,7 +52,10 @@ async function runBatchChunks(
     offset += DB_BATCH_MAX_STATEMENTS
   ) {
     const chunk = statements.slice(offset, offset + DB_BATCH_MAX_STATEMENTS);
-    if (chunk.length) await db.batch(chunk as SqliteBatch);
+    if (chunk.length) {
+      budget?.spend(1);
+      await db.batch(chunk as SqliteBatch);
+    }
   }
 }
 export interface DriveMetadataFile {
@@ -56,137 +71,111 @@ export interface DriveMetadataFile {
   size?: string;
   trashed?: boolean;
 }
-export async function persistDiscoveredFileMetadata(input: {
-  connectorId: string;
-  workspaceId: string;
-  files: DriveMetadataFile[];
-}) {
+export async function persistDiscoveredFileMetadata(
+  input: {
+    connectorId: string;
+    workspaceId: string;
+    files: DriveMetadataFile[];
+  } & BudgetOption,
+) {
   if (!input.files.length) return 0;
   const db = await getDb(),
     now = new Date().toISOString(),
-    statements: BatchItem<"sqlite">[] = [];
-  for (
-    let offset = 0;
-    offset < input.files.length;
-    offset += METADATA_ROWS_PER_STATEMENT
-  ) {
-    const rows = await Promise.all(
-      input.files
-        .slice(offset, offset + METADATA_ROWS_PER_STATEMENT)
-        .map(async (file) => ({
-          id: `gdrive_${await shortHash(`${input.connectorId}:${file.id}`)}`,
-          workspaceId: input.workspaceId,
-          connectorId: input.connectorId,
-          sourceId: file.id,
-          name: file.name,
-          mimeType: file.mimeType,
-          ownersJson: JSON.stringify(file.owners ?? []),
-          permissionsJson: JSON.stringify(file.permissions ?? []),
-          parentsJson: JSON.stringify(file.parents ?? []),
-          modifiedAt: file.modifiedTime,
-          webViewLink: validatedGoogleSourceUrl(file.webViewLink),
-          md5Checksum: file.md5Checksum,
-          sizeBytes: file.size ? Number(file.size) : null,
-          trashed: Boolean(file.trashed),
-          indexStatus: "metadata" as const,
-          searchableStatus: "searchable" as const,
-          lastPermissionCheckedAt: now,
-          createdAt: now,
-          updatedAt: now,
-        })),
+    rows = await Promise.all(
+      input.files.map(async (file) => ({
+        id: `gdrive_${await shortHash(`${input.connectorId}:${file.id}`)}`,
+        workspaceId: input.workspaceId,
+        connectorId: input.connectorId,
+        sourceId: file.id,
+        name: file.name,
+        mimeType: file.mimeType,
+        ownersJson: JSON.stringify(file.owners ?? []),
+        permissionsJson: JSON.stringify(file.permissions ?? []),
+        parentsJson: JSON.stringify(file.parents ?? []),
+        modifiedAt: file.modifiedTime,
+        webViewLink: validatedGoogleSourceUrl(file.webViewLink),
+        // md5_checksum is the record of content we ACTUALLY extracted and
+        // persisted, so discovery must never populate it. Writing Drive's
+        // checksum here made never-indexed files look like content duplicates
+        // and let them be skipped forever.
+        md5Checksum: null,
+        sizeBytes: file.size ? Number(file.size) : null,
+        trashed: Boolean(file.trashed),
+        indexStatus: "metadata" as const,
+        searchableStatus: "searchable" as const,
+        lastPermissionCheckedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })),
     );
-    statements.push(
-      db
-        .insert(sourceFiles)
-        .values(rows)
-        .onConflictDoUpdate({
-          target: [sourceFiles.connectorId, sourceFiles.sourceId],
-          // Metadata-only refresh: keep modified_at, md5_checksum, index_status,
-          // retry_count, searchable_status, and extraction fields untouched so
-          // change detection and per-file failure state stay honest.
-          set: {
-            name: sql`excluded.name`,
-            mimeType: sql`excluded.mime_type`,
-            ownersJson: sql`excluded.owners_json`,
-            permissionsJson: sql`excluded.permissions_json`,
-            parentsJson: sql`excluded.parents_json`,
-            webViewLink: sql`excluded.web_view_link`,
-            sizeBytes: sql`excluded.size_bytes`,
-            trashed: sql`excluded.trashed`,
-            lastPermissionCheckedAt: sql`excluded.last_permission_checked_at`,
-            updatedAt: sql`excluded.updated_at`,
-          },
-        }),
-    );
-  }
-  await runBatchChunks(db, statements);
-  return input.files.length;
+  // Metadata-only refresh: keep modified_at, md5_checksum, index_status,
+  // retry_count, searchable_status, and extraction fields untouched so change
+  // detection and per-file failure state stay honest.
+  await runBatchChunks(
+    db,
+    discoveredMetadataStatements(db as StatementDb, rows),
+    input.budget,
+  );
+  return rows.length;
 }
-export async function refreshFileMetadataBatch(input: {
-  connectorId: string;
-  files: DriveMetadataFile[];
-}) {
+export async function refreshFileMetadataBatch(
+  input: {
+    connectorId: string;
+    files: DriveMetadataFile[];
+  } & BudgetOption,
+) {
   if (!input.files.length) return 0;
   const db = await getDb(),
     now = new Date().toISOString(),
-    statements = input.files.map((file) =>
-      db
-        .update(sourceFiles)
-        .set({
-          name: file.name,
-          mimeType: file.mimeType,
-          ownersJson: JSON.stringify(file.owners ?? []),
-          permissionsJson: JSON.stringify(file.permissions ?? []),
-          parentsJson: JSON.stringify(file.parents ?? []),
-          modifiedAt: file.modifiedTime,
-          webViewLink: validatedGoogleSourceUrl(file.webViewLink),
-          md5Checksum: file.md5Checksum,
-          sizeBytes: file.size ? Number(file.size) : null,
-          trashed: Boolean(file.trashed),
-          lastPermissionCheckedAt: now,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(sourceFiles.connectorId, input.connectorId),
-            eq(sourceFiles.sourceId, file.id),
-          ),
-        ),
-    );
-  await runBatchChunks(db, statements);
+    updates = input.files.map((file) => ({
+      sourceId: file.id,
+      values: {
+        name: file.name,
+        mimeType: file.mimeType,
+        ownersJson: JSON.stringify(file.owners ?? []),
+        permissionsJson: JSON.stringify(file.permissions ?? []),
+        parentsJson: JSON.stringify(file.parents ?? []),
+        modifiedAt: file.modifiedTime,
+        webViewLink: validatedGoogleSourceUrl(file.webViewLink),
+        // Never touches md5_checksum: a metadata refresh persists no content.
+        sizeBytes: file.size ? Number(file.size) : null,
+        trashed: Boolean(file.trashed),
+        lastPermissionCheckedAt: now,
+        updatedAt: now,
+      },
+    }));
+  await runBatchChunks(
+    db,
+    metadataRefreshStatements(db as StatementDb, {
+      connectorId: input.connectorId,
+      updates,
+    }),
+    input.budget,
+  );
   return input.files.length;
 }
+/**
+ * Charge the per-file retry budget. Called for files that are genuinely being
+ * attempted, one attempt at a time — never speculatively for a whole candidate
+ * list, which used to burn MAX_FILE_RETRIES without a single re-extraction.
+ */
 export async function recordFileRetryAttempts(
   connectorId: string,
   sourceIds: string[],
+  budget?: Pick<SubrequestBudget, "spend">,
 ) {
   if (!sourceIds.length) return;
   const db = await getDb(),
-    now = new Date().toISOString(),
-    statements: BatchItem<"sqlite">[] = [];
-  for (
-    let offset = 0;
-    offset < sourceIds.length;
-    offset += RETRY_IDS_PER_STATEMENT
-  )
-    statements.push(
-      db
-        .update(sourceFiles)
-        .set({
-          retryCount: sql`${sourceFiles.retryCount} + 1`,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(sourceFiles.connectorId, connectorId),
-            inArray(
-              sourceFiles.sourceId,
-              sourceIds.slice(offset, offset + RETRY_IDS_PER_STATEMENT),
-            ),
-          ),
-        ),
-    );
-  await runBatchChunks(db, statements);
+    now = new Date().toISOString();
+  await runBatchChunks(
+    db,
+    retryAttemptStatements(db as StatementDb, {
+      connectorId,
+      sourceIds,
+      now,
+    }),
+    budget,
+  );
 }
 export async function latestSyncForConnector(connectorId: string) {
   const db = await getDb();
@@ -350,10 +339,16 @@ export async function existingSourceFiles(connectorId: string) {
       modifiedAt: sourceFiles.modifiedAt,
       indexStatus: sourceFiles.indexStatus,
       extractionMode: sourceFiles.extractionMode,
-      // The stored content hash for hash-based duplicate detection: Drive's
-      // md5Checksum recorded the last time this file's content was persisted.
+      // Content hash for duplicate detection. `persistExtractedFile` writes it
+      // in the SAME transactional batch that commits the file_versions row
+      // (extraction_status complete) and flips index_status to `indexed`, and
+      // nothing else ever writes it — so `indexStatus === "indexed"` together
+      // with this hash means content really was extracted and persisted.
       contentHash: sourceFiles.md5Checksum,
       retryCount: sourceFiles.retryCount,
+      // Lets change detection tell "unchanged since a PRIOR sync" apart from
+      // "this job already indexed it a few hops ago".
+      updatedAt: sourceFiles.updatedAt,
     })
     .from(sourceFiles)
     .where(
@@ -362,6 +357,46 @@ export async function existingSourceFiles(connectorId: string) {
         eq(sourceFiles.trashed, false),
       ),
     );
+}
+/** Committed metadata rows — the honest source for `metadataIndexedCount`. */
+export async function countConnectorSourceFiles(connectorId: string) {
+  const db = await getDb(),
+    row = await db
+      .select({ value: count() })
+      .from(sourceFiles)
+      .where(
+        and(
+          eq(sourceFiles.connectorId, connectorId),
+          eq(sourceFiles.trashed, false),
+        ),
+      )
+      .get();
+  return row?.value ?? 0;
+}
+/**
+ * The durable discovery cursor: the newest run's saved `next_page_token` plus
+ * the files it had already discovered. A budget- or deadline-limited discovery
+ * hop checkpoints here and the next hop resumes at the token instead of
+ * re-listing from page 1 — which is what made large drives unable to finish.
+ */
+export async function latestDiscoveryCheckpoint(connectorId: string) {
+  const db = await getDb(),
+    run = await db
+      .select({
+        nextPageToken: syncRuns.nextPageToken,
+        filesDiscovered: syncRuns.filesDiscovered,
+        paginationComplete: syncRuns.paginationComplete,
+      })
+      .from(syncRuns)
+      .where(eq(syncRuns.connectorId, connectorId))
+      .orderBy(desc(syncRuns.startedAt))
+      .limit(1)
+      .get();
+  if (!run || run.paginationComplete || !run.nextPageToken) return null;
+  return {
+    pageToken: run.nextPageToken,
+    discoveredBefore: Math.max(0, run.filesDiscovered),
+  };
 }
 export async function updateConnectorTokens(
   id: string,
@@ -503,10 +538,13 @@ export async function finishSync(
     filesUnchanged?: number;
     filesRemoved?: number;
     paginationComplete?: boolean;
+    nextPageToken?: string | null;
     errorCode?: string;
   },
+  budget?: Pick<SubrequestBudget, "spend">,
 ) {
   const db = await getDb();
+  budget?.spend(1);
   await db
     .update(syncRuns)
     .set({
@@ -532,8 +570,10 @@ export async function checkpointSync(
     paginationComplete: boolean;
     nextPageToken: string | null;
   }>,
+  budget?: Pick<SubrequestBudget, "spend">,
 ) {
   const db = await getDb();
+  budget?.spend(1);
   await db.update(syncRuns).set(input).where(eq(syncRuns.id, id));
 }
 export async function recoverStaleSyncRuns(
@@ -617,7 +657,7 @@ export async function persistExtractedFile(input: {
     | "unsupported"
     | "ai_enriched";
   structuralFallbackReason?: string | null;
-}) {
+} & BudgetOption) {
   const db = await getDb(),
     now = new Date().toISOString(),
     fileId = `gdrive_${await shortHash(`${input.connectorId}:${input.file.id}`)}`,
@@ -625,118 +665,86 @@ export async function persistExtractedFile(input: {
       input.units.map((unit) => unit.contentHash).join(":") ||
       input.file.md5Checksum ||
       input.file.modifiedTime,
-    versionId = `ver_${await shortHash(`${fileId}:${combinedHash}`)}`;
+    versionId = `ver_${await shortHash(`${fileId}:${combinedHash}`)}`,
+    indexed = input.units.length > 0,
+    // Only a persisted extraction may record the provider checksum: this is
+    // the value duplicate detection compares against, and it is committed in
+    // the same batch as the file_versions row and the `indexed` status flip.
+    persistedChecksum = indexed ? (input.file.md5Checksum ?? null) : null,
+    statusFields = {
+      name: input.file.name,
+      mimeType: input.file.mimeType,
+      ownersJson: JSON.stringify(input.file.owners ?? []),
+      permissionsJson: JSON.stringify(input.file.permissions ?? []),
+      parentsJson: JSON.stringify(input.file.parents ?? []),
+      modifiedAt: input.file.modifiedTime,
+      webViewLink: validatedGoogleSourceUrl(input.file.webViewLink),
+      md5Checksum: persistedChecksum,
+      sizeBytes: input.file.size ? Number(input.file.size) : null,
+      trashed: Boolean(input.file.trashed),
+      indexStatus: (indexed ? "indexed" : "unsupported") as
+        | "indexed"
+        | "unsupported",
+      retryCount: 0,
+      extractionError: null,
+      extractionMode: input.extractionMode ?? null,
+      structuralFallbackReason: input.structuralFallbackReason ?? null,
+      searchableStatus: (indexed ? "searchable" : "hidden") as
+        | "searchable"
+        | "hidden",
+      extractionVersion: "structural-v1",
+      indexingVersion: "literal-v1",
+      tombstonedAt: null,
+      lastPermissionCheckedAt: now,
+      updatedAt: now,
+    };
   // One file's version + units + status land through a single transactional
-  // db.batch (chunked only for pathological unit counts, with the status flip
-  // ordered last) — this is the per-file durable checkpoint.
-  const statements: BatchItem<"sqlite">[] = [];
-  if (input.units.length) {
-    statements.push(
-      db
-        .insert(fileVersions)
-        .values({
-          id: versionId,
-          fileId,
-          sourceModifiedAt: input.file.modifiedTime,
-          contentHash: combinedHash,
-          extractionStatus: "complete",
-          createdAt: now,
-        })
-        .onConflictDoNothing(),
-      db.delete(extractedUnits).where(eq(extractedUnits.fileId, fileId)),
-    );
-    for (
-      let offset = 0;
-      offset < input.units.length;
-      offset += UNIT_ROWS_PER_STATEMENT
-    )
-      statements.push(
-        db.insert(extractedUnits).values(
-          input.units
-            .slice(offset, offset + UNIT_ROWS_PER_STATEMENT)
-            .map((unit, chunkIndex) => ({
-              id: `unit_${versionId}_${offset + chunkIndex}`,
-              workspaceId: input.workspaceId,
-              fileId,
-              fileVersionId: versionId,
-              unitType: unit.unitType,
-              structuralLocationJson: JSON.stringify(unit.location),
-              textContent: unit.text,
-              contentHash: unit.contentHash,
-              createdAt: now,
-            })),
-        ),
-      );
-  }
-  statements.push(
-    db
-      .insert(sourceFiles)
-      .values({
+  // db.batch (chunked only for pathological unit counts, with the completeness
+  // flip ordered last) — this is the per-file durable checkpoint.
+  await runBatchChunks(
+    db,
+    extractedFileStatements(db as StatementDb, {
+      versionId,
+      fileId,
+      sourceModifiedAt: input.file.modifiedTime,
+      contentHash: combinedHash,
+      units: input.units.map((unit, index) => ({
+        id: `unit_${versionId}_${index}`,
+        workspaceId: input.workspaceId,
+        fileId,
+        fileVersionId: versionId,
+        unitType: unit.unitType,
+        structuralLocationJson: JSON.stringify(unit.location),
+        textContent: unit.text,
+        contentHash: unit.contentHash,
+        createdAt: now,
+      })),
+      sourceFile: {
         id: fileId,
         workspaceId: input.workspaceId,
         connectorId: input.connectorId,
         sourceId: input.file.id,
-        name: input.file.name,
-        mimeType: input.file.mimeType,
-        ownersJson: JSON.stringify(input.file.owners ?? []),
-        permissionsJson: JSON.stringify(input.file.permissions ?? []),
-        parentsJson: JSON.stringify(input.file.parents ?? []),
-        modifiedAt: input.file.modifiedTime,
-        webViewLink: validatedGoogleSourceUrl(input.file.webViewLink),
-        md5Checksum: input.file.md5Checksum,
-        sizeBytes: input.file.size ? Number(input.file.size) : null,
-        trashed: Boolean(input.file.trashed),
-        indexStatus: input.units.length ? "indexed" : "unsupported",
-        retryCount: 0,
-        extractionError: null,
-        extractionMode: input.extractionMode ?? null,
-        structuralFallbackReason: input.structuralFallbackReason ?? null,
-        searchableStatus: input.units.length ? "searchable" : "hidden",
-        extractionVersion: "structural-v1",
-        indexingVersion: "literal-v1",
-        tombstonedAt: null,
-        lastPermissionCheckedAt: now,
+        ...statusFields,
         createdAt: now,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: [sourceFiles.connectorId, sourceFiles.sourceId],
-        set: {
-          name: input.file.name,
-          mimeType: input.file.mimeType,
-          ownersJson: JSON.stringify(input.file.owners ?? []),
-          permissionsJson: JSON.stringify(input.file.permissions ?? []),
-          parentsJson: JSON.stringify(input.file.parents ?? []),
-          modifiedAt: input.file.modifiedTime,
-          webViewLink: validatedGoogleSourceUrl(input.file.webViewLink),
-          md5Checksum: input.file.md5Checksum,
-          sizeBytes: input.file.size ? Number(input.file.size) : null,
-          trashed: Boolean(input.file.trashed),
-          indexStatus: input.units.length ? "indexed" : "unsupported",
-          retryCount: 0,
-          extractionError: null,
-          extractionMode: input.extractionMode ?? null,
-          structuralFallbackReason: input.structuralFallbackReason ?? null,
-          searchableStatus: input.units.length ? "searchable" : "hidden",
-          extractionVersion: "structural-v1",
-          indexingVersion: "literal-v1",
-          tombstonedAt: null,
-          lastPermissionCheckedAt: now,
-          updatedAt: now,
-        },
-      }),
+      },
+      sourceFileUpdate: statusFields,
+      now,
+    }),
+    input.budget,
   );
-  await runBatchChunks(db, statements);
   return {
     fileId,
+    indexed,
     unitIds: input.units.map((_, index) => `unit_${versionId}_${index}`),
   };
 }
 export async function reconcileMissingSourceFiles(
   connectorId: string,
   currentSourceIds: Set<string>,
+  budget?: Pick<SubrequestBudget, "spend" | "canSpend">,
 ) {
   const db = await getDb(),
+    now = new Date().toISOString(),
     rows = await db
       .select({ id: sourceFiles.id, sourceId: sourceFiles.sourceId })
       .from(sourceFiles)
@@ -748,27 +756,38 @@ export async function reconcileMissingSourceFiles(
       ),
     missing = rows.filter((row) => !currentSourceIds.has(row.sourceId));
   if (!missing.length) return 0;
+  // Bounded like every other loop in the hop: two statements per tombstone,
+  // batched, and stopped as soon as the subrequest budget is spent.
+  let reconciled = 0;
   for (const row of missing) {
-    await db
-      .update(sourceFiles)
-      .set({
-        trashed: true,
-        indexStatus: "failed",
-        extractionError: "SOURCE_NO_LONGER_AUTHORIZED",
-        searchableStatus: "unauthorized",
-        tombstonedAt: new Date().toISOString(),
-        lastPermissionCheckedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      })
-      .where(
-        and(
-          eq(sourceFiles.id, row.id),
-          eq(sourceFiles.connectorId, connectorId),
-        ),
-      );
-    await db.delete(extractedUnits).where(eq(extractedUnits.fileId, row.id));
+    if (budget && !budget.canSpend(1)) break;
+    await runBatchChunks(
+      db,
+      [
+        db
+          .update(sourceFiles)
+          .set({
+            trashed: true,
+            indexStatus: "failed",
+            extractionError: "SOURCE_NO_LONGER_AUTHORIZED",
+            searchableStatus: "unauthorized",
+            tombstonedAt: now,
+            lastPermissionCheckedAt: now,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(sourceFiles.id, row.id),
+              eq(sourceFiles.connectorId, connectorId),
+            ),
+          ),
+        db.delete(extractedUnits).where(eq(extractedUnits.fileId, row.id)),
+      ],
+      budget,
+    );
+    reconciled += 1;
   }
-  return missing.length;
+  return reconciled;
 }
 export async function markFileFailed(input: {
   connectorId: string;
@@ -787,10 +806,21 @@ export async function markFileFailed(input: {
     trashed?: boolean;
   };
   errorCode: string;
-}) {
+  /** Terminal for this run: keeps the row settled instead of retry-eligible. */
+  terminal?: boolean;
+  extractionMode?: string | null;
+  /**
+   * Whether to also record a user-visible `indexing_failures` row. The
+   * in-progress marker written before every extraction is not a failure — it
+   * is durability — so it skips the failure record (and its subrequest).
+   */
+  recordFailure?: boolean;
+} & BudgetOption) {
   const db = await getDb(),
     now = new Date().toISOString(),
-    fileId = `gdrive_${await shortHash(`${input.connectorId}:${input.file.id}`)}`;
+    fileId = `gdrive_${await shortHash(`${input.connectorId}:${input.file.id}`)}`,
+    indexStatus = input.terminal ? ("unsupported" as const) : ("failed" as const);
+  input.budget?.spend(1);
   await db
     .insert(sourceFiles)
     .values({
@@ -805,11 +835,13 @@ export async function markFileFailed(input: {
       parentsJson: JSON.stringify(input.file.parents ?? []),
       modifiedAt: input.file.modifiedTime,
       webViewLink: validatedGoogleSourceUrl(input.file.webViewLink),
-      md5Checksum: input.file.md5Checksum,
+      // No content was persisted, so no content checksum is recorded.
+      md5Checksum: null,
       sizeBytes: input.file.size ? Number(input.file.size) : null,
       trashed: Boolean(input.file.trashed),
-      indexStatus: "failed",
+      indexStatus,
       extractionError: input.errorCode,
+      extractionMode: input.extractionMode ?? null,
       searchableStatus: "hidden",
       createdAt: now,
       updatedAt: now,
@@ -817,13 +849,18 @@ export async function markFileFailed(input: {
     .onConflictDoUpdate({
       target: [sourceFiles.connectorId, sourceFiles.sourceId],
       set: {
-        indexStatus: "failed",
+        indexStatus,
         extractionError: input.errorCode,
+        ...(input.extractionMode
+          ? { extractionMode: input.extractionMode }
+          : {}),
         searchableStatus: "hidden",
         updatedAt: now,
       },
     });
+  if (input.recordFailure === false) return;
   const classified = classifyIndexingFailure(input.errorCode);
+  input.budget?.spend(1);
   await db
     .insert(indexingFailures)
     .values({
