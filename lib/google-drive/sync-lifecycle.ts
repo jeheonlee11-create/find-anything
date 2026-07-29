@@ -93,31 +93,33 @@ export function planSyncContinuation<
   const previousBySourceId = new Map(
       previousFiles.map((file) => [file.sourceId, file]),
     ),
-    currentFiles = inventory.filter((file) => {
-      const previous = previousBySourceId.get(file.id);
-      return (
-        previous?.modifiedAt === file.modifiedTime &&
-        settledStatuses.includes(previous.indexStatus)
+    currentFiles: T[] = [],
+    duplicateFiles: T[] = [],
+    pendingFiles: T[] = [],
+    settledFiles: T[] = [];
+  // Single O(n) classification pass — this plan runs per continuation hop on
+  // 10k+ file inventories.
+  for (const file of inventory) {
+    const previous = previousBySourceId.get(file.id),
+      settled = Boolean(
+        previous && settledStatuses.includes(previous.indexStatus),
       );
-    }),
-    duplicateFiles = inventory.filter((file) => {
-      if (currentFiles.includes(file)) return false;
-      const previous = previousBySourceId.get(file.id);
-      return Boolean(
-        previous &&
-          settledStatuses.includes(previous.indexStatus) &&
-          file.md5Checksum &&
-          previous.contentHash &&
-          previous.contentHash === file.md5Checksum,
-      );
-    }),
-    pendingFiles = inventory.filter(
-      (file) => !currentFiles.includes(file) && !duplicateFiles.includes(file),
-    ),
-    settledFiles = [...currentFiles, ...duplicateFiles],
-    indexedFiles = settledFiles
-      .map((file) => previousBySourceId.get(file.id))
-      .filter((file) => file?.indexStatus === "indexed");
+    if (settled && previous?.modifiedAt === file.modifiedTime) {
+      currentFiles.push(file);
+      settledFiles.push(file);
+    } else if (
+      settled &&
+      file.md5Checksum &&
+      previous?.contentHash &&
+      previous.contentHash === file.md5Checksum
+    ) {
+      duplicateFiles.push(file);
+      settledFiles.push(file);
+    } else pendingFiles.push(file);
+  }
+  const indexedFiles = settledFiles
+    .map((file) => previousBySourceId.get(file.id))
+    .filter((file) => file?.indexStatus === "indexed");
   const failedFiles = settledFiles
     .map((file) => previousBySourceId.get(file.id))
     .filter((file) => file?.indexStatus === "failed");
