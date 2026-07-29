@@ -10,7 +10,12 @@ import {
   users,
   workspaces,
 } from "@/db/schema";
-import { isDemoWorkspace, type AuthenticatedActor } from "@/lib/auth/api-authorization";
+import {
+  DEMO_WORKSPACE_ID,
+  isDemoWorkspace,
+  YC_DEMO_WORKSPACE_ID,
+  type AuthenticatedActor,
+} from "@/lib/auth/api-authorization";
 import { recoverStaleSyncRuns } from "@/lib/google-drive/repository";
 import { indexingRateFromHops } from "@/lib/indexing/job-lifecycle";
 export async function ensureUser(actor: AuthenticatedActor) {
@@ -49,6 +54,31 @@ export async function createWorkspace(actor: AuthenticatedActor, name: string) {
     createdAt: now,
   });
   return { id, name, role: "owner" as const, createdAt: now };
+}
+export const DEFAULT_WORKSPACE_NAME = "My Drive";
+/**
+ * Returns the actor's private workspace, creating one on first use. Reuses
+ * `createWorkspace`, so the owner membership row is always written through the
+ * same path; demo workspaces are never treated as the actor's own workspace.
+ */
+export async function ensureDefaultWorkspace(actor: AuthenticatedActor) {
+  const owned = (await listActorWorkspaces(actor.actorId)).filter(
+    (workspace) =>
+      !isDemoWorkspace(workspace.id) &&
+      workspace.id !== DEMO_WORKSPACE_ID &&
+      workspace.id !== YC_DEMO_WORKSPACE_ID,
+  );
+  const existing = owned[0];
+  if (existing)
+    return {
+      id: existing.id,
+      name: existing.name,
+      role: existing.role,
+      createdAt: existing.createdAt,
+      created: false,
+    };
+  const created = await createWorkspace(actor, DEFAULT_WORKSPACE_NAME);
+  return { ...created, created: true };
 }
 export async function listActorWorkspaces(actorId: string) {
   const db = await getDb();
