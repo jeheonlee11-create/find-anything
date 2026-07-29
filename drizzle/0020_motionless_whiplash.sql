@@ -1,0 +1,1 @@
+ALTER TABLE `indexing_jobs` ADD `oversized_count` integer DEFAULT 0 NOT NULL;

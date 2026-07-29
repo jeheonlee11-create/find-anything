@@ -57,7 +57,7 @@ export async function POST(request: Request) {
     body.message.jobId,
     "",
     body.message.continuationId,
-    { queueClaimed: true },
+    { queueClaimed: true, executionLeaseOwner: body.leaseOwner },
   );
   if (!result)
     return NextResponse.json(

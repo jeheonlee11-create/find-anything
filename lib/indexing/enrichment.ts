@@ -63,16 +63,46 @@ export interface EnrichedUnit {
   contentHash: string;
 }
 
+/** Media types the model can actually read bytes for. */
+export function enrichableDocumentBlock(
+  file: { mimeType: string },
+  data?: ArrayBuffer,
+) {
+  if (!data || data.byteLength === 0) return null;
+  if (file.mimeType === "application/pdf")
+    return {
+      type: "document",
+      source: {
+        type: "base64",
+        media_type: "application/pdf",
+        data: base64(data),
+      },
+    };
+  if (file.mimeType.startsWith("image/"))
+    return {
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: file.mimeType,
+        data: base64(data),
+      },
+    };
+  return null;
+}
+
 /**
- * Describe the file to Claude and return searchable text units.
+ * Read a document's bytes with Claude and return searchable text units.
  *
  * The DEFAULT path is a clean no-op: when `enrichmentEnabled(env)` is false
- * this returns `null` without touching the network. When enabled it POSTs the
- * exported bytes (PDF as a document block, images as an image block; metadata
- * only otherwise) to the Claude API and converts the reply into extracted
- * units the caller persists with `extraction_mode: "ai_enriched"`. Tests must
- * always inject `fetchImpl`; the flag stays off in every test environment so
- * no test can hit the network.
+ * this returns `null` without touching the network.
+ *
+ * Even when enabled, a call happens ONLY when real document bytes are being
+ * sent. A filename-only prompt would send the filename off the boundary for
+ * zero extraction value, and anything the model replied would be invention,
+ * not extraction — so it must never be persisted as indexed content. Callers
+ * skip candidates whose bytes cannot be fetched. Tests always inject
+ * `fetchImpl`; the flag stays off in every test environment so no test can
+ * hit the network.
  */
 export async function enrichFile(input: {
   file: { id: string; name: string; mimeType: string };
@@ -81,29 +111,13 @@ export async function enrichFile(input: {
   fetchImpl?: typeof fetch;
 }): Promise<EnrichedUnit[] | null> {
   if (!enrichmentEnabled(input.env)) return null;
+  const documentBlock = enrichableDocumentBlock(input.file, input.data);
+  if (!documentBlock) return null;
   const fetchImpl = input.fetchImpl ?? fetch,
-    content: Record<string, unknown>[] = [];
-  if (input.data && input.file.mimeType === "application/pdf")
-    content.push({
-      type: "document",
-      source: {
-        type: "base64",
-        media_type: "application/pdf",
-        data: base64(input.data),
-      },
-    });
-  else if (input.data && input.file.mimeType.startsWith("image/"))
-    content.push({
-      type: "image",
-      source: {
-        type: "base64",
-        media_type: input.file.mimeType,
-        data: base64(input.data),
-      },
-    });
+    content: Record<string, unknown>[] = [documentBlock];
   content.push({
     type: "text",
-    text: `Extract the searchable text content of the file "${input.file.name}" (${input.file.mimeType}). Reply with plain text only: one line per distinct passage, no commentary. Reply with NONE if there is no legible text.`,
+    text: `Extract the searchable text content of this ${input.file.mimeType} document. Reply with plain text only: one line per distinct passage, no commentary. Reply with NONE if there is no legible text.`,
   });
   const response = await fetchImpl(ENRICHMENT_API_URL, {
     method: "POST",

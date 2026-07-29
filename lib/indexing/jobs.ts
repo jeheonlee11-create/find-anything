@@ -1,6 +1,11 @@
 import { and, desc, eq, inArray, lte, max, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
+  accumulatedCounter,
+  continuationExecutionFence,
+  monotonicCounter as monotonic,
+} from "@/lib/indexing/continuation-fence";
+import {
   connectors,
   coverageReceipts,
   indexingContinuations,
@@ -593,15 +598,32 @@ async function continuationTokenMatches(jobId: string, token: string) {
   return Boolean(row);
 }
 
+/**
+ * Claims execution of a continuation and returns the lease owner that fences
+ * this hop's writes. The poll-driven path used to leave `executionLeaseOwner`
+ * null, so a lease-expired zombie hop's late commit could not be told apart
+ * from the live one and silently overwrote job counters.
+ */
 export async function markContinuationWorkerStarted(
   jobId: string,
   continuationId: string,
+  leaseMs = 15 * 60_000,
 ) {
-  const now = new Date().toISOString();
-  return transitionContinuation(jobId, continuationId, "acknowledged", {
-    status: "worker_started",
-    workerStartedAt: now,
-  }, "continuation_worker_started");
+  const now = new Date().toISOString(),
+    leaseOwner = `exec_${crypto.randomUUID()}`,
+    started = await transitionContinuation(
+      jobId,
+      continuationId,
+      "acknowledged",
+      {
+        status: "worker_started",
+        workerStartedAt: now,
+        executionLeaseOwner: leaseOwner,
+        executionLeaseExpiresAt: new Date(Date.now() + leaseMs).toISOString(),
+      },
+      "continuation_worker_started",
+    );
+  return started ? leaseOwner : null;
 }
 
 export async function failContinuation(
@@ -737,6 +759,7 @@ export async function indexingJobForWorkspace(
       unchangedCount: indexingJobs.unchangedCount,
       duplicateCount: indexingJobs.duplicateCount,
       retriedCount: indexingJobs.retriedCount,
+      oversizedCount: indexingJobs.oversizedCount,
       retryCount: indexingJobs.retryCount,
       continuationCount: indexingJobs.continuationCount,
       terminalReason: indexingJobs.terminalReason,
@@ -761,7 +784,7 @@ export async function runIndexingJob(
   jobId: string,
   continuationToken: string,
   continuationId: string,
-  options: { queueClaimed?: boolean } = {},
+  options: { queueClaimed?: boolean; executionLeaseOwner?: string } = {},
 ) {
   const db = await getDb(),
     tokenHash = await sha256(continuationToken),
@@ -787,10 +810,10 @@ export async function runIndexingJob(
       .returning()
       .get();
   if (!claimed) return null;
-  const workerStarted = options.queueClaimed
-    ? true
+  const executionLeaseOwner = options.queueClaimed
+    ? (options.executionLeaseOwner ?? null)
     : await markContinuationWorkerStarted(jobId, continuationId);
-  if (!workerStarted) {
+  if (!options.queueClaimed && !executionLeaseOwner) {
     await failJob(
       jobId,
       null,
@@ -804,6 +827,25 @@ export async function runIndexingJob(
       continuationId: null,
     };
   }
+  // Fence for every write this hop commits: the continuation must still be the
+  // one we are executing, still `worker_started`, and still owned by us. A
+  // lease-expired zombie hop's late commit becomes a clean no-op instead of
+  // overwriting counters and forking the continuation chain.
+  const executionFence = continuationExecutionFence({
+    jobId,
+    continuationId,
+    leaseOwner: executionLeaseOwner,
+  });
+  const currentContinuation = await db
+    .select({ sequence: indexingContinuations.sequence })
+    .from(indexingContinuations)
+    .where(
+      and(
+        eq(indexingContinuations.id, continuationId),
+        eq(indexingContinuations.jobId, jobId),
+      ),
+    )
+    .get();
   let attemptId: string | null = null;
   try {
     const persistedAttempt = await db
@@ -848,24 +890,71 @@ export async function runIndexingJob(
       throw new Error("GOOGLE_REAUTHORIZATION_REQUIRED");
     const result = await synchronizeGoogleDrive(connector, async (progress) => {
         const heartbeat = new Date().toISOString();
+        // In-hop heartbeats may only RAISE a counter. Writing the hop-local
+        // value directly made every counter sawtooth to 0 at the start of each
+        // continuation (9,500 -> 0 -> 9,700) for the whole job; the
+        // end-of-hop write below is the authoritative absolute value.
         await db
           .update(indexingJobs)
           .set({
             stage: progress.stage,
             discoveryStatus: progress.discoveryStatus,
-            processedCount: progress.filesProcessed,
-            discoveredCount: progress.filesDiscovered,
-            indexedCount: progress.filesIndexed,
-            unsupportedCount: progress.filesUnsupported,
-            skippedCount: progress.filesUnsupported,
-            inaccessibleCount: progress.filesInaccessible,
-            failedCount: progress.filesFailed,
-            structuralCount: progress.structuredFiles,
-            fallbackCount: progress.fallbackFiles,
-            metadataIndexedCount: progress.filesMetadataIndexed,
-            contentIndexedCount: progress.filesIndexed,
-            unchangedCount: progress.filesUnchanged,
-            duplicateCount: progress.filesDuplicate,
+            processedCount: monotonic(
+              indexingJobs.processedCount,
+              progress.filesProcessed,
+            ),
+            discoveredCount: monotonic(
+              indexingJobs.discoveredCount,
+              progress.filesDiscovered,
+            ),
+            indexedCount: monotonic(
+              indexingJobs.indexedCount,
+              progress.filesIndexed,
+            ),
+            unsupportedCount: monotonic(
+              indexingJobs.unsupportedCount,
+              progress.filesUnsupported,
+            ),
+            skippedCount: monotonic(
+              indexingJobs.skippedCount,
+              progress.filesUnsupported,
+            ),
+            inaccessibleCount: monotonic(
+              indexingJobs.inaccessibleCount,
+              progress.filesInaccessible,
+            ),
+            failedCount: monotonic(
+              indexingJobs.failedCount,
+              progress.filesFailed,
+            ),
+            structuralCount: monotonic(
+              indexingJobs.structuralCount,
+              progress.structuredFiles,
+            ),
+            fallbackCount: monotonic(
+              indexingJobs.fallbackCount,
+              progress.fallbackFiles,
+            ),
+            metadataIndexedCount: monotonic(
+              indexingJobs.metadataIndexedCount,
+              progress.filesMetadataIndexed,
+            ),
+            contentIndexedCount: monotonic(
+              indexingJobs.contentIndexedCount,
+              progress.filesIndexed,
+            ),
+            unchangedCount: monotonic(
+              indexingJobs.unchangedCount,
+              progress.filesUnchanged,
+            ),
+            duplicateCount: monotonic(
+              indexingJobs.duplicateCount,
+              progress.filesDuplicate,
+            ),
+            oversizedCount: monotonic(
+              indexingJobs.oversizedCount,
+              progress.filesOversized,
+            ),
             // retriedCount accumulates across hops at continuation completion
             heartbeatAt: heartbeat,
             updatedAt: heartbeat,
@@ -886,7 +975,15 @@ export async function runIndexingJob(
           failedCount: progress.filesFailed,
           stage: progress.stage,
         });
-      }, { discoveryOnly: claimed.discoveryStatus !== "complete" }),
+        },
+        {
+          discoveryOnly: claimed.discoveryStatus !== "complete",
+          // Resume Drive pagination at the durable cursor whenever discovery
+          // has already started but not finished.
+          resumeDiscovery: claimed.discoveryStatus === "running",
+          runStartedAt: claimed.startedAt ?? claimed.createdAt,
+        },
+      ),
       finishedAt = new Date().toISOString(),
       unsupportedCount = result.filesUnsupported,
       continuationNeeded =
@@ -897,6 +994,9 @@ export async function runIndexingJob(
         : result.status === "complete"
           ? "completed"
           : result.status;
+    // Derived from THIS continuation's sequence, never from the current max:
+    // a zombie hop then computes the same next id and its insert conflicts
+    // away instead of forking a second continuation chain.
     const persistedContinuation = continuationNeeded
         ? await db
             .select({ value: max(indexingContinuations.sequence) })
@@ -905,15 +1005,21 @@ export async function runIndexingJob(
             .get()
         : null,
       nextContinuationSequence = continuationNeeded
-        ? Math.max(
-            attemptNumber,
-            claimed.continuationCount,
-            persistedContinuation?.value ?? 0,
-          ) + 1
+        ? (currentContinuation?.sequence ??
+            Math.max(
+              attemptNumber,
+              claimed.continuationCount,
+              persistedContinuation?.value ?? 0,
+            )) + 1
         : null,
       nextContinuationId = nextContinuationSequence
         ? continuationDispatchId(jobId, nextContinuationSequence)
         : null;
+    // Only the hop that still owns the execution lease may commit.
+    const fencedJobIds = db
+      .select({ jobId: indexingContinuations.jobId })
+      .from(indexingContinuations)
+      .where(executionFence);
     const updateJob = db.update(indexingJobs).set({
         status,
         stage: continuationNeeded
@@ -921,21 +1027,75 @@ export async function runIndexingJob(
           : status === "completed"
             ? "completed"
             : "failed",
-        discoveryStatus: result.paginationComplete ? "complete" : "failed",
-        processedCount: result.filesProcessed,
-        discoveredCount: result.filesDiscovered,
-        indexedCount: result.filesIndexed,
-        unsupportedCount,
-        skippedCount: unsupportedCount,
-        inaccessibleCount: result.filesRemoved,
-        failedCount: result.filesFailed,
-        structuralCount: result.structuredFiles,
-        fallbackCount: result.fallbackFiles,
-        metadataIndexedCount: result.filesMetadataIndexed,
-        contentIndexedCount: result.filesIndexed,
-        unchangedCount: result.filesUnchanged,
-        duplicateCount: result.filesDuplicate,
-        retriedCount: sql`${indexingJobs.retriedCount} + ${result.filesRetried}`,
+        // A budget- or deadline-limited discovery checkpoint is still running
+        // discovery, not failed: the next hop resumes at the saved cursor.
+        discoveryStatus: result.paginationComplete
+          ? "complete"
+          : continuationNeeded
+            ? "running"
+            : "failed",
+        // Absolute end-of-hop truth, but still only upward: a hop that only
+        // checkpointed discovery never held the inventory, so its zeros must
+        // not erase what earlier hops of this job already accounted for.
+        processedCount: monotonic(
+          indexingJobs.processedCount,
+          result.filesProcessed,
+        ),
+        discoveredCount: monotonic(
+          indexingJobs.discoveredCount,
+          result.filesDiscovered,
+        ),
+        indexedCount: monotonic(indexingJobs.indexedCount, result.filesIndexed),
+        unsupportedCount: monotonic(
+          indexingJobs.unsupportedCount,
+          unsupportedCount,
+        ),
+        skippedCount: monotonic(indexingJobs.skippedCount, unsupportedCount),
+        inaccessibleCount: monotonic(
+          indexingJobs.inaccessibleCount,
+          result.filesRemoved,
+        ),
+        // Failures legitimately fall when a retry succeeds, so this one is
+        // absolute — but only when the hop actually planned the inventory.
+        failedCount: result.plannedInventory
+          ? result.filesFailed
+          : monotonic(indexingJobs.failedCount, result.filesFailed),
+        structuralCount: monotonic(
+          indexingJobs.structuralCount,
+          result.structuredFiles,
+        ),
+        fallbackCount: monotonic(
+          indexingJobs.fallbackCount,
+          result.fallbackFiles,
+        ),
+        metadataIndexedCount: monotonic(
+          indexingJobs.metadataIndexedCount,
+          result.filesMetadataIndexed,
+        ),
+        // Only files the DB actually persisted as `indexed`.
+        contentIndexedCount: monotonic(
+          indexingJobs.contentIndexedCount,
+          result.filesIndexed,
+        ),
+        unchangedCount: monotonic(
+          indexingJobs.unchangedCount,
+          result.filesUnchanged,
+        ),
+        // Duplicates and retries are per-hop events: they accumulate across
+        // continuations instead of being overwritten by the next hop's 0.
+        // The execution fence makes each accumulation happen exactly once.
+        duplicateCount: accumulatedCounter(
+          indexingJobs.duplicateCount,
+          result.filesDuplicate,
+        ),
+        retriedCount: accumulatedCounter(
+          indexingJobs.retriedCount,
+          result.filesRetried,
+        ),
+        oversizedCount: accumulatedCounter(
+          indexingJobs.oversizedCount,
+          result.filesOversized,
+        ),
         continuationCount: attemptNumber,
         heartbeatAt: finishedAt,
         completedAt: continuationNeeded ? null : finishedAt,
@@ -952,10 +1112,15 @@ export async function runIndexingJob(
             ? "SYNC_PARTIAL"
             : null,
         updatedAt: finishedAt,
-      }).where(eq(indexingJobs.id, jobId));
+      }).where(and(eq(indexingJobs.id, jobId), inArray(indexingJobs.id, fencedJobIds)));
     const updateAttempt = db.update(indexingJobAttempts)
         .set({ status: "completed", completedAt: finishedAt, heartbeatAt: finishedAt })
-        .where(eq(indexingJobAttempts.id, candidateAttemptId));
+        .where(
+          and(
+            eq(indexingJobAttempts.id, candidateAttemptId),
+            eq(indexingJobAttempts.status, "running"),
+          ),
+        );
     const completeContinuation = db.update(indexingContinuations)
         .set({
           status: "completed",
@@ -964,13 +1129,7 @@ export async function runIndexingJob(
           // these snapshots on trailing completed continuations.
           processedCountAtCompletion: result.filesProcessed,
         })
-        .where(
-          and(
-            eq(indexingContinuations.id, continuationId),
-            eq(indexingContinuations.jobId, jobId),
-            eq(indexingContinuations.status, "worker_started"),
-          ),
-        );
+        .where(executionFence);
     if (nextContinuationId) {
       const persistNext = db.insert(indexingContinuations).values({
           id: nextContinuationId,
@@ -982,11 +1141,13 @@ export async function runIndexingJob(
           availableAt: finishedAt,
           updatedAt: finishedAt,
         }).onConflictDoNothing();
+      // completeContinuation runs last: it invalidates the fence the earlier
+      // statements in this batch are guarded by.
       await db.batch([
         updateJob,
         updateAttempt,
-        completeContinuation,
         persistNext,
+        completeContinuation,
       ]);
     } else
       await db.batch([updateJob, updateAttempt, completeContinuation]);
@@ -1007,26 +1168,37 @@ export async function runIndexingJob(
       });
     if (!continuationNeeded) {
       await refreshWorkspaceConflicts(claimed.workspaceId, await indexedWorkspaceFiles(claimed.workspaceId));
+      // The receipt reports the PERSISTED job counters, not the last hop's
+      // in-memory view — accumulated counters (duplicates, retries, oversized)
+      // only exist in the row, and the last hop always sees 0 of them.
+      const persisted = await indexingJobForWorkspace(
+        claimed.workspaceId,
+        jobId,
+      );
       await persistCoverageReceipt({
         job: claimed,
         runId: result.runId,
         status,
         inventoryComplete: result.paginationComplete,
         counts: {
-          discovered: result.filesDiscovered,
-          processed: result.filesProcessed,
-          indexed: result.filesIndexed,
-          unsupported: unsupportedCount,
-          failed: result.filesFailed,
-          structural: result.structuredFiles,
-          fallback: result.fallbackFiles,
+          discovered: persisted?.discoveredCount ?? result.filesDiscovered,
+          processed: persisted?.processedCount ?? result.filesProcessed,
+          indexed: persisted?.indexedCount ?? result.filesIndexed,
+          unsupported: persisted?.unsupportedCount ?? unsupportedCount,
+          failed: persisted?.failedCount ?? result.filesFailed,
+          structural: persisted?.structuralCount ?? result.structuredFiles,
+          fallback: persisted?.fallbackCount ?? result.fallbackFiles,
           added: result.filesAdded,
           updated: result.filesUpdated,
-          unchanged: result.filesUnchanged,
+          unchanged: persisted?.unchangedCount ?? result.filesUnchanged,
           deleted: result.filesRemoved,
-          metadataIndexed: result.filesMetadataIndexed,
-          duplicate: result.filesDuplicate,
-          retried: result.filesRetried,
+          metadataIndexed:
+            persisted?.metadataIndexedCount ?? result.filesMetadataIndexed,
+          contentIndexed:
+            persisted?.contentIndexedCount ?? result.filesIndexed,
+          duplicate: persisted?.duplicateCount ?? result.filesDuplicate,
+          retried: persisted?.retriedCount ?? result.filesRetried,
+          oversized: persisted?.oversizedCount ?? result.filesOversized,
         },
         finishedAt,
       });

@@ -141,6 +141,13 @@
       "when": 1785300826148,
       "tag": "0019_shiny_ben_parker",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1785315755118,
+      "tag": "0020_motionless_whiplash",
+      "breakpoints": true
     }
   ]
 }

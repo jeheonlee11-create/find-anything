@@ -20,7 +20,7 @@ export function classifyPoolSignal(value: unknown): PoolSignal | null {
   return null;
 }
 
-export interface AdaptivePoolOptions<R> {
+export interface AdaptivePoolOptions<T, R> {
   initial?: number;
   min?: number;
   max?: number;
@@ -40,6 +40,14 @@ export interface AdaptivePoolOptions<R> {
   /** Classify a worker result as a backoff signal; throws are classified too. */
   signalOf?: (result: R) => PoolSignal | null;
   onSignal?: (signal: PoolSignal, concurrency: number) => void;
+  /**
+   * Bytes (or any additive cost) an item holds in memory while it runs. A
+   * concurrency cap alone does not bound memory: 20 slots × a 50 MB export is
+   * 1 GB inside a 128 MB isolate.
+   */
+  weightOf?: (item: T, index: number) => number;
+  /** Aggregate in-flight weight the pool may admit at once. */
+  maxInFlightWeight?: number;
 }
 
 export interface AdaptivePoolStats {
@@ -50,13 +58,17 @@ export interface AdaptivePoolStats {
   finalConcurrency: number;
   peakConcurrency: number;
   concurrencyLog: number[];
+  /** Highest aggregate in-flight weight admitted at any instant. */
+  peakInFlightWeight: number;
+  /** Times admission was withheld because the weight cap was reached. */
+  weightWaits: number;
   elapsedMs: number;
 }
 
 export async function runPool<T, R>(
   items: readonly T[],
   worker: (item: T, index: number) => Promise<R>,
-  options: AdaptivePoolOptions<R> = {},
+  options: AdaptivePoolOptions<T, R> = {},
 ): Promise<AdaptivePoolStats> {
   const max = Math.max(1, options.max ?? 20),
     min = Math.max(1, Math.min(options.min ?? 2, max)),
@@ -70,12 +82,18 @@ export async function runPool<T, R>(
       options.sleep ??
       ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
     shouldStop = options.shouldStop ?? (() => false),
-    signalOf = options.signalOf ?? (() => null);
+    signalOf = options.signalOf ?? (() => null),
+    weightOf = options.weightOf ?? (() => 0),
+    maxInFlightWeight = Math.max(
+      0,
+      options.maxInFlightWeight ?? Number.MAX_SAFE_INTEGER,
+    );
   let concurrency = Math.min(max, Math.max(min, options.initial ?? max)),
     cleanStreak = 0,
     consecutiveSignals = 0,
     nextIndex = 0,
     inFlight = 0,
+    inFlightWeight = 0,
     backoffUntilPromise: Promise<void> | null = null;
   const startedAt = now();
   const stats: AdaptivePoolStats = {
@@ -86,6 +104,8 @@ export async function runPool<T, R>(
     finalConcurrency: concurrency,
     peakConcurrency: concurrency,
     concurrencyLog: [concurrency],
+    peakInFlightWeight: 0,
+    weightWaits: 0,
     elapsedMs: 0,
   };
   const recordConcurrency = () => {
@@ -139,13 +159,30 @@ export async function runPool<T, R>(
         nextIndex < items.length &&
         !shouldStop()
       ) {
-        const index = nextIndex;
+        const index = nextIndex,
+          weight = Math.max(0, weightOf(items[index], index));
+        // Admit by aggregate in-flight weight as well as by slot count. An
+        // item heavier than the whole cap only runs alone, so the pool can
+        // never deadlock on it.
+        if (inFlight > 0 && inFlightWeight + weight > maxInFlightWeight) {
+          stats.weightWaits += 1;
+          break;
+        }
         nextIndex += 1;
         inFlight += 1;
+        inFlightWeight += weight;
+        stats.peakInFlightWeight = Math.max(
+          stats.peakInFlightWeight,
+          inFlightWeight,
+        );
         stats.started += 1;
+        const release = () => {
+          inFlight -= 1;
+          inFlightWeight = Math.max(0, inFlightWeight - weight);
+        };
         worker(items[index], index).then(
           (result) => {
-            inFlight -= 1;
+            release();
             stats.completed += 1;
             const signal = signalOf(result);
             if (signal) applySignal(signal);
@@ -153,7 +190,7 @@ export async function runPool<T, R>(
             schedule();
           },
           (error: unknown) => {
-            inFlight -= 1;
+            release();
             stats.completed += 1;
             stats.failed += 1;
             const signal = classifyPoolSignal(error);

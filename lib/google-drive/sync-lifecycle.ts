@@ -88,12 +88,31 @@ export function planSyncContinuation<
     extractionMode: string | null;
     contentHash?: string | null;
     retryCount?: number;
+    updatedAt?: string;
   }[],
+  options: {
+    /**
+     * ISO start of the current indexing job. Rows settled at or after it were
+     * settled BY THIS RUN, so they are not "unchanged since a prior sync" —
+     * reporting them as unchanged is how a fresh 10k job claimed ~9,500
+     * unchanged files it had just indexed itself.
+     */
+    runStartedAt?: string | null;
+  } = {},
 ) {
   const previousBySourceId = new Map(
       previousFiles.map((file) => [file.sourceId, file]),
     ),
+    runStartedAt = options.runStartedAt
+      ? Date.parse(options.runStartedAt)
+      : null,
+    settledByPriorRun = (previous?: { updatedAt?: string }) => {
+      if (runStartedAt === null || !Number.isFinite(runStartedAt)) return true;
+      const updated = Date.parse(previous?.updatedAt ?? "");
+      return !Number.isFinite(updated) || updated < runStartedAt;
+    },
     currentFiles: T[] = [],
+    unchangedFiles: T[] = [],
     duplicateFiles: T[] = [],
     pendingFiles: T[] = [],
     settledFiles: T[] = [];
@@ -107,10 +126,16 @@ export function planSyncContinuation<
     if (settled && previous?.modifiedAt === file.modifiedTime) {
       currentFiles.push(file);
       settledFiles.push(file);
+      if (settledByPriorRun(previous)) unchangedFiles.push(file);
     } else if (
-      settled &&
+      // Duplicate ONLY against content this pipeline actually extracted and
+      // persisted. `index_status === "indexed"` is written in the same
+      // transactional batch as the file_versions row and the checksum, so a
+      // never-extracted (metadata/failed/unsupported) row can never be
+      // classified as a duplicate and have its re-extraction signal consumed.
+      previous?.indexStatus === "indexed" &&
       file.md5Checksum &&
-      previous?.contentHash &&
+      previous.contentHash &&
       previous.contentHash === file.md5Checksum
     ) {
       duplicateFiles.push(file);
@@ -139,7 +164,10 @@ export function planSyncContinuation<
     duplicateFiles,
     retryableFiles,
     filesProcessed: settledFiles.length,
-    filesUnchanged: currentFiles.length,
+    /** Skipped because they were already settled by a PRIOR run. */
+    filesUnchanged: unchangedFiles.length,
+    /** Already settled, but by an earlier hop of the run in progress. */
+    filesSettledThisRun: currentFiles.length - unchangedFiles.length,
     filesDuplicate: duplicateFiles.length,
     filesIndexed: indexedFiles.length,
     filesFailed: failedFiles.length,
@@ -163,6 +191,29 @@ export const COMMON_DRIVE_MIME_TYPES = new Set([
 ]);
 export const LARGE_FILE_BYTES = 15 * 1024 * 1024;
 export const RECENT_MODIFICATION_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * Memory admission for the extraction pool. A concurrency cap alone does not
+ * bound memory: 20 slots × a 50 MB export is 1 GB inside a 128 MB isolate, and
+ * because hop ordering is deterministic every recovered hop rebuilt the same
+ * fatal window. Files are admitted by aggregate in-flight bytes, and anything
+ * above the per-file cap is settled with a distinct, counted status instead of
+ * being retried into the same crash forever.
+ */
+export const MAX_IN_FLIGHT_EXTRACTION_BYTES = 32 * 1024 * 1024;
+export const MAX_EXTRACTABLE_FILE_BYTES = 24 * 1024 * 1024;
+export const OVERSIZED_FILE_ERROR_CODE = "FILE_TOO_LARGE_TO_EXTRACT";
+
+export function driveFileBytes(file: { size?: string }) {
+  const bytes = Number(file.size ?? 0);
+  return Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+}
+
+export function isOversizedForExtraction(
+  file: { size?: string },
+  cap = MAX_EXTRACTABLE_FILE_BYTES,
+) {
+  return driveFileBytes(file) > cap;
+}
 
 export interface PrioritizableDriveFile {
   id: string;

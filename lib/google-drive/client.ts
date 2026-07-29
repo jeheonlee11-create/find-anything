@@ -48,14 +48,35 @@ export interface DriveInventoryProgress {
   incompleteSearch: boolean;
   pageFiles: DriveFileMetadata[];
 }
+export interface DriveInventoryOptions {
+  /** Resume pagination at a durably checkpointed cursor. */
+  pageToken?: string | null;
+  /** Files already discovered by earlier hops, so progress stays cumulative. */
+  discoveredBefore?: number;
+  /** Charged once per Drive page request, before the fetch is issued. */
+  onRequest?: () => void;
+  /**
+   * Checked before each page. Returning true stops pagination cleanly and
+   * returns the cursor to resume from — never a thrown hop.
+   */
+  shouldStop?: () => boolean;
+}
 export async function listAllDriveFiles(
   accessToken: string,
   onProgress?: (progress: DriveInventoryProgress) => void | Promise<void>,
+  options: DriveInventoryOptions = {},
 ) {
-  const files: DriveFileMetadata[] = [];
-  let pageToken: string | undefined;
+  const files: DriveFileMetadata[] = [],
+    discoveredBefore = Math.max(0, options.discoveredBefore ?? 0),
+    shouldStop = options.shouldStop ?? (() => false);
+  let pageToken: string | undefined = options.pageToken ?? undefined;
   let incompleteSearch = false;
+  let stoppedEarly = false;
   do {
+    if (shouldStop()) {
+      stoppedEarly = true;
+      break;
+    }
     const url = new URL("https://www.googleapis.com/drive/v3/files");
     url.search = new URLSearchParams({
       pageSize: "1000",
@@ -64,6 +85,7 @@ export async function listAllDriveFiles(
       spaces: "drive",
       ...(pageToken ? { pageToken } : {}),
     }).toString();
+    options.onRequest?.();
     const page = (await googleFetch(url.toString(), accessToken).then(
       (response) => response.json(),
     )) as {
@@ -75,14 +97,23 @@ export async function listAllDriveFiles(
     pageToken = page.nextPageToken;
     incompleteSearch ||= Boolean(page.incompleteSearch);
     await onProgress?.({
-      filesDiscovered: files.length,
+      filesDiscovered: discoveredBefore + files.length,
       nextPageToken: pageToken ?? null,
       paginationComplete: !pageToken && !incompleteSearch,
       incompleteSearch,
       pageFiles: page.files ?? [],
     });
   } while (pageToken);
-  return { files, incompleteSearch };
+  return {
+    files,
+    incompleteSearch,
+    /** Cursor to resume from; null once the inventory is exhausted. */
+    nextPageToken: pageToken ?? null,
+    paginationComplete: !stoppedEarly && !pageToken && !incompleteSearch,
+    stoppedEarly,
+    /** True when this pass began from a checkpointed cursor. */
+    resumed: Boolean(options.pageToken),
+  };
 }
 export async function exportGoogleFile(
   accessToken: string,

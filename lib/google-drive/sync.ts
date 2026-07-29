@@ -10,8 +10,10 @@ import {
   beginSync,
   acquireTokenRefreshLease,
   checkpointSync,
+  countConnectorSourceFiles,
   existingSourceFiles,
   finishSync,
+  latestDiscoveryCheckpoint,
   markFileFailed,
   persistDiscoveredFileMetadata,
   persistExtractedFile,
@@ -25,8 +27,12 @@ import {
 } from "./repository";
 import { GoogleOAuthError, refreshAccessToken } from "./oauth";
 import {
+  driveFileBytes,
   isExtractableDriveMimeType,
+  isOversizedForExtraction,
   MAX_FILE_RETRIES,
+  MAX_IN_FLIGHT_EXTRACTION_BYTES,
+  OVERSIZED_FILE_ERROR_CODE,
   planSyncContinuation,
   sortPendingDriveFiles,
   terminalSyncStatus,
@@ -35,6 +41,13 @@ import {
   classifyPoolSignal,
   runPool,
 } from "@/lib/indexing/adaptive-pool";
+import {
+  createSubrequestBudget,
+  SUBREQUESTS_PER_FILE,
+  workWindowFromBudget,
+  type SubrequestBudget,
+  type SubrequestBudgetEnv,
+} from "@/lib/indexing/subrequest-budget";
 import {
   enrichFile,
   enrichmentEnabled,
@@ -56,7 +69,10 @@ export interface StoredConnector {
 const SYNC_TOTAL_BUDGET_MS = 12_000;
 const SYNC_BATCH_SIZE = 10; // checkpoint + heartbeat cadence inside the pool
 const UNSUPPORTED_BATCH_SIZE = 20;
-const WORK_WINDOW_FILES = 500; // ids claimed per continuation hop
+// Upper bound on a hop's work window. The ACTUAL window is derived from the
+// remaining Workers subrequest budget (see workWindowFromBudget) — a hardcoded
+// window is what blew the subrequest limit and stalled large drives.
+const WORK_WINDOW_MAX_FILES = 500;
 const EXTRACTION_POOL_INITIAL = 20;
 const EXTRACTION_POOL_MIN = 2;
 const EXTRACTION_POOL_MAX = 20;
@@ -77,6 +93,7 @@ export type DriveSyncProgress = {
   filesUnchanged: number;
   filesDuplicate: number;
   filesRetried: number;
+  filesOversized: number;
   paginationComplete: boolean;
 };
 export async function usableAccessToken(connector: StoredConnector) {
@@ -156,10 +173,30 @@ async function waitForConcurrentRefresh(connectorId: string) {
 export async function synchronizeGoogleDrive(
   connector: StoredConnector,
   onProgress?: (progress: DriveSyncProgress) => Promise<void>,
-  options: { discoveryOnly?: boolean } = {},
+  options: {
+    discoveryOnly?: boolean;
+    /** Resume Drive pagination from the durable cursor instead of page 1. */
+    resumeDiscovery?: boolean;
+    /** ISO start of the job, for honest "unchanged since a prior sync". */
+    runStartedAt?: string | null;
+    env?: SubrequestBudgetEnv;
+    budget?: SubrequestBudget;
+  } = {},
 ) {
+  // One explicit Workers subrequest budget for the whole hop, covering Drive
+  // fetches AND D1 batches. Running out is a durable checkpoint, never a throw.
+  const budget =
+    options.budget ??
+    createSubrequestBudget({
+      env: options.env ?? (process.env as SubrequestBudgetEnv),
+    });
+  const resumeFrom = options.resumeDiscovery
+    ? await latestDiscoveryCheckpoint(connector.id)
+    : null;
+  budget.spend(1);
   const runId = await beginSync(connector.id, true);
-  let discovered = 0,
+  budget.spend(2);
+  let discovered = resumeFrom?.discoveredBefore ?? 0,
     indexed = 0,
     failed = 0,
     structuredFiles = 0,
@@ -174,6 +211,7 @@ export async function synchronizeGoogleDrive(
     metadataIndexed = 0,
     duplicates = 0,
     retried = 0,
+    oversized = 0,
     stoppedEarly = false;
   const fallbackReasons: Record<string, number> = {};
   const baseProgress = () => ({
@@ -189,8 +227,10 @@ export async function synchronizeGoogleDrive(
     filesUnchanged,
     filesDuplicate: duplicates,
     filesRetried: retried,
+    filesOversized: oversized,
   });
   await setConnectorStatus(connector.id, "syncing");
+  budget.spend(1);
   try {
     await reportProgress(onProgress, {
       ...baseProgress(),
@@ -199,6 +239,7 @@ export async function synchronizeGoogleDrive(
       paginationComplete: false,
     });
     const accessToken = await usableAccessToken(connector);
+    budget.spend(1);
     logIndexingEvent("discovery_started", {
       workspaceId: connector.workspaceId,
       connectorId: connector.id,
@@ -213,82 +254,177 @@ export async function synchronizeGoogleDrive(
     // Snapshot the previously persisted files BEFORE metadata upserts run so
     // timestamp/hash change detection compares against pre-discovery state.
     const previousFiles = await existingSourceFiles(connector.id);
+    budget.spend(1);
+    const discoveryDeadline = Date.now() + SYNC_TOTAL_BUDGET_MS;
     // Stage 1 (metadata-first): on the discovery hop every page is bulk-upserted
     // as metadata-only source_files rows, so search-by-name is available the
     // moment pagination completes — before any extraction.
     const metadataFirst = options.discoveryOnly !== false;
-    const inventory = await listAllDriveFiles(accessToken, async (progress) => {
-      discovered = progress.filesDiscovered;
-      paginationComplete = progress.paginationComplete;
-      if (metadataFirst && progress.pageFiles.length)
-        metadataIndexed += await persistDiscoveredFileMetadata({
-          connectorId: connector.id,
-          workspaceId: connector.workspaceId,
-          files: progress.pageFiles,
+    const inventory = await listAllDriveFiles(
+      accessToken,
+      async (progress) => {
+        discovered = progress.filesDiscovered;
+        paginationComplete = progress.paginationComplete;
+        if (metadataFirst && progress.pageFiles.length)
+          await persistDiscoveredFileMetadata({
+            connectorId: connector.id,
+            workspaceId: connector.workspaceId,
+            files: progress.pageFiles,
+            budget,
+          });
+        // Per-page durable cursor: the next hop resumes here instead of
+        // re-listing from page 1. On extraction hops (which re-list only to
+        // rebuild the inventory) the cursor is written just once, when the
+        // pass ends or the budget runs out, so pagination does not eat the
+        // budget the extraction window is derived from.
+        if (
+          metadataFirst ||
+          progress.paginationComplete ||
+          budget.exhausted()
+        )
+          await checkpointSync(
+            runId,
+            {
+              filesDiscovered: discovered,
+              filesIndexed: indexed,
+              filesFailed: failed,
+              structuredFiles,
+              fallbackFiles,
+              paginationComplete: progress.paginationComplete,
+              nextPageToken: progress.nextPageToken,
+            },
+            budget,
+          );
+        await reportProgress(onProgress, {
+          ...baseProgress(),
+          stage: progress.paginationComplete
+            ? "discovery_complete"
+            : "discovering",
+          discoveryStatus: progress.paginationComplete ? "complete" : "running",
+          paginationComplete: progress.paginationComplete,
         });
-      await checkpointSync(runId, {
+        logIndexingEvent("discovery_progress", {
+          workspaceId: connector.workspaceId,
+          connectorId: connector.id,
+          discoveredCount: discovered,
+          stage: "discovering",
+        });
+      },
+      {
+        pageToken: resumeFrom?.pageToken ?? null,
+        discoveredBefore: resumeFrom?.discoveredBefore ?? 0,
+        onRequest: () => budget.spend(1),
+        shouldStop: () => budget.exhausted() || Date.now() >= discoveryDeadline,
+      },
+    );
+    if (inventory.incompleteSearch) throw new Error("GOOGLE_INCOMPLETE_SEARCH");
+    metadataIndexed = await countConnectorSourceFiles(connector.id);
+    budget.spend(1);
+    // A budget- or deadline-limited pass, or a pass that resumed mid-inventory,
+    // does NOT hold the whole inventory in memory. Planning, duplicate
+    // classification, and tombstoning would all be wrong against a partial
+    // list, so this hop ends as an honest, resumable discovery checkpoint.
+    if (!inventory.paginationComplete || inventory.resumed) {
+      const errorCode = inventory.paginationComplete
+        ? "DISCOVERY_CHECKPOINT_COMPLETE"
+        : "DISCOVERY_BUDGET_CHECKPOINT";
+      await finishSync(
+        runId,
+        {
+          status: "partial",
+          filesDiscovered: discovered,
+          filesIndexed: indexed,
+          filesFailed: failed,
+          structuredFiles,
+          fallbackFiles,
+          fallbackReasonsJson: JSON.stringify(fallbackReasons),
+          filesAdded,
+          filesUpdated,
+          filesUnchanged,
+          filesRemoved: 0,
+          paginationComplete: inventory.paginationComplete,
+          nextPageToken: inventory.nextPageToken,
+          errorCode,
+        },
+        budget,
+      );
+      await setConnectorStatus(connector.id, "connected", errorCode);
+      return {
+        status: "partial" as const,
+        runId,
         filesDiscovered: discovered,
         filesIndexed: indexed,
         filesFailed: failed,
         structuredFiles,
         fallbackFiles,
-        paginationComplete: progress.paginationComplete,
-        nextPageToken: progress.nextPageToken,
-      });
-      await reportProgress(onProgress, {
-        ...baseProgress(),
-        stage: progress.paginationComplete
-          ? "discovery_complete"
-          : "discovering",
-        discoveryStatus: progress.paginationComplete ? "complete" : "running",
-        paginationComplete: progress.paginationComplete,
-      });
-      logIndexingEvent("discovery_progress", {
-        workspaceId: connector.workspaceId,
-        connectorId: connector.id,
-        discoveredCount: discovered,
-        stage: "discovering",
-      });
-    });
-    if (inventory.incompleteSearch) throw new Error("GOOGLE_INCOMPLETE_SEARCH");
+        fallbackReasons,
+        filesAdded,
+        filesUpdated,
+        filesUnchanged,
+        filesRemoved: 0,
+        paginationComplete: inventory.paginationComplete,
+        discoveryResumable: !inventory.paginationComplete,
+        // This hop never held the full inventory, so its zeros are not facts.
+        plannedInventory: false,
+        filesProcessed,
+        filesUnsupported,
+        filesMetadataIndexed: metadataIndexed,
+        filesDuplicate: duplicates,
+        filesRetried: retried,
+        filesOversized: oversized,
+        filesDeferred: Math.max(0, discovered - filesProcessed),
+        continuationNeeded: true,
+        subrequestsSpent: budget.spent,
+      };
+    }
     discovered = inventory.files.length;
-    metadataIndexed = discovered;
     logIndexingEvent("discovery_completed", {
       workspaceId: connector.workspaceId,
       connectorId: connector.id,
       discoveredCount: discovered,
       stage: "discovery_complete",
     });
-    const continuation = planSyncContinuation(inventory.files, previousFiles),
+    const continuation = planSyncContinuation(inventory.files, previousFiles, {
+        runStartedAt: options.runStartedAt ?? null,
+      }),
       { previousBySourceId, pendingFiles } = continuation,
       unsupportedFiles = pendingFiles.filter(
         (file) => !isExtractableDriveMimeType(file.mimeType),
       ),
-      extractableFiles = sortPendingDriveFiles(
+      admissibleFiles = sortPendingDriveFiles(
         pendingFiles.filter((file) => isExtractableDriveMimeType(file.mimeType)),
         {
           previouslyFailed: (sourceId) =>
             previousBySourceId.get(sourceId)?.indexStatus === "failed",
         },
       ),
+      oversizedFiles = admissibleFiles.filter((file) =>
+        isOversizedForExtraction(file),
+      ),
+      extractableFiles = admissibleFiles.filter(
+        (file) => !isOversizedForExtraction(file),
+      ),
       processingDeadline = Date.now() + SYNC_TOTAL_BUDGET_MS;
     filesProcessed = continuation.filesProcessed;
     filesUnchanged = continuation.filesUnchanged;
-    duplicates = continuation.filesDuplicate;
     indexed = continuation.filesIndexed;
     failed = continuation.filesFailed;
     structuredFiles = continuation.structuredFiles;
     fallbackFiles = continuation.fallbackFiles;
-    await checkpointSync(runId, {
-      filesDiscovered: discovered,
-      filesIndexed: indexed,
-      filesFailed: failed,
-      structuredFiles,
-      fallbackFiles,
-      filesUnchanged,
-      paginationComplete: true,
-      nextPageToken: null,
-    });
+    await checkpointSync(
+      runId,
+      {
+        filesDiscovered: discovered,
+        filesIndexed: indexed,
+        filesFailed: failed,
+        structuredFiles,
+        fallbackFiles,
+        filesUnchanged,
+        paginationComplete: true,
+        nextPageToken: null,
+      },
+      budget,
+    );
     filesUnsupported = continuation.filesUnsupported;
     await reportProgress(onProgress, {
       ...baseProgress(),
@@ -297,21 +433,26 @@ export async function synchronizeGoogleDrive(
       paginationComplete: true,
     });
     if (options.discoveryOnly) {
-      await finishSync(runId, {
-        status: "partial",
-        filesDiscovered: discovered,
-        filesIndexed: indexed,
-        filesFailed: failed,
-        structuredFiles,
-        fallbackFiles,
-        fallbackReasonsJson: JSON.stringify(fallbackReasons),
-        filesAdded,
-        filesUpdated,
-        filesUnchanged,
-        filesRemoved: 0,
-        paginationComplete: true,
-        errorCode: "DISCOVERY_CHECKPOINT_COMPLETE",
-      });
+      await finishSync(
+        runId,
+        {
+          status: "partial",
+          filesDiscovered: discovered,
+          filesIndexed: indexed,
+          filesFailed: failed,
+          structuredFiles,
+          fallbackFiles,
+          fallbackReasonsJson: JSON.stringify(fallbackReasons),
+          filesAdded,
+          filesUpdated,
+          filesUnchanged,
+          filesRemoved: 0,
+          paginationComplete: true,
+          nextPageToken: null,
+          errorCode: "DISCOVERY_CHECKPOINT_COMPLETE",
+        },
+        budget,
+      );
       await setConnectorStatus(
         connector.id,
         "connected",
@@ -331,29 +472,66 @@ export async function synchronizeGoogleDrive(
         filesUnchanged,
         filesRemoved: 0,
         paginationComplete: true,
+        discoveryResumable: false,
+        plannedInventory: true,
         filesProcessed,
         filesUnsupported,
         filesMetadataIndexed: metadataIndexed,
         filesDuplicate: duplicates,
         filesRetried: retried,
+        filesOversized: oversized,
         filesDeferred: Math.max(0, discovered - filesProcessed),
         continuationNeeded: true,
+        subrequestsSpent: budget.spent,
       };
     }
     // Stage 2: hash-identical duplicates only need their metadata refreshed —
-    // no re-extraction — so the next hop sees a timestamp match.
+    // no re-extraction — so the next hop sees a timestamp match. Bounded by the
+    // same deadline and subrequest budget as every other loop in the hop.
     for (
       let offset = 0;
       offset < continuation.duplicateFiles.length;
       offset += UNSUPPORTED_BATCH_SIZE
-    )
+    ) {
+      if (Date.now() >= processingDeadline || budget.exhausted()) {
+        stoppedEarly = true;
+        break;
+      }
+      const batch = continuation.duplicateFiles.slice(
+        offset,
+        offset + UNSUPPORTED_BATCH_SIZE,
+      );
       await refreshFileMetadataBatch({
         connectorId: connector.id,
-        files: continuation.duplicateFiles.slice(
-          offset,
-          offset + UNSUPPORTED_BATCH_SIZE,
-        ),
+        files: batch,
+        budget,
       });
+      // Only duplicates whose metadata refresh actually committed are counted,
+      // so accumulating across hops can never double count.
+      duplicates += batch.length;
+    }
+    // Files too large to hold in a 128 MB isolate are settled with a distinct,
+    // counted status instead of being re-admitted into the identical fatal
+    // window on every recovered hop.
+    for (const file of oversizedFiles) {
+      if (Date.now() >= processingDeadline || !budget.canSpend(2)) {
+        stoppedEarly = true;
+        break;
+      }
+      await markFileFailed({
+        connectorId: connector.id,
+        workspaceId: connector.workspaceId,
+        file,
+        errorCode: OVERSIZED_FILE_ERROR_CODE,
+        extractionMode: "skipped_too_large",
+        terminal: true,
+        budget,
+      });
+      filesProcessed += 1;
+      oversized += 1;
+      filesUnsupported += 1;
+    }
+    if (oversizedFiles.length > oversized) stoppedEarly = true;
     type EnrichmentCandidate = {
       id: string;
       name: string;
@@ -368,7 +546,7 @@ export async function synchronizeGoogleDrive(
       offset < unsupportedFiles.length;
       offset += UNSUPPORTED_BATCH_SIZE
     ) {
-      if (Date.now() >= processingDeadline) {
+      if (Date.now() >= processingDeadline || budget.exhausted()) {
         stoppedEarly = true;
         break;
       }
@@ -385,6 +563,7 @@ export async function synchronizeGoogleDrive(
             units: [],
             extractionMode: "unsupported",
             structuralFallbackReason: null,
+            budget,
           }),
         ),
       );
@@ -399,18 +578,22 @@ export async function synchronizeGoogleDrive(
           file,
           countedUnsupported: true,
         });
-      await checkpointSync(runId, {
-        filesDiscovered: discovered,
-        filesIndexed: indexed,
-        filesFailed: failed,
-        structuredFiles,
-        fallbackFiles,
-        filesAdded,
-        filesUpdated,
-        filesUnchanged,
-        paginationComplete: true,
-        nextPageToken: null,
-      });
+      await checkpointSync(
+        runId,
+        {
+          filesDiscovered: discovered,
+          filesIndexed: indexed,
+          filesFailed: failed,
+          structuredFiles,
+          fallbackFiles,
+          filesAdded,
+          filesUpdated,
+          filesUnchanged,
+          paginationComplete: true,
+          nextPageToken: null,
+        },
+        budget,
+      );
       await reportProgress(onProgress, {
         ...baseProgress(),
         stage: "indexing",
@@ -418,11 +601,16 @@ export async function synchronizeGoogleDrive(
         paginationComplete: true,
       });
     }
-    // Stage 3-5: claim a bounded work window of the highest-priority pending
-    // files and extract them through the adaptive pool with per-file
-    // transactional checkpoints. Only file handles flow through the pool; each
-    // slot fetches, parses, writes, and releases one file's export at a time.
-    const claimedWindow = extractableFiles.slice(0, WORK_WINDOW_FILES),
+    // Stage 3-5: claim a work window sized by the subrequest budget the hop has
+    // left (never a hardcoded 500) and extract the highest-priority pending
+    // files through the adaptive pool with per-file transactional checkpoints.
+    // Only file handles flow through the pool; each slot fetches, parses,
+    // writes, and releases one file's export at a time.
+    const workWindow = workWindowFromBudget(budget, {
+        perFile: SUBREQUESTS_PER_FILE,
+        cap: WORK_WINDOW_MAX_FILES,
+      }),
+      claimedWindow = extractableFiles.slice(0, workWindow),
       hopFailures: { file: DriveFileMetadata; retryCountBefore: number }[] = [];
     let completionsSinceCheckpoint = 0,
       checkpointError: unknown = null,
@@ -430,19 +618,23 @@ export async function synchronizeGoogleDrive(
     const queueCheckpoint = () => {
       progressChain = progressChain
         .then(async () => {
-          await checkpointSync(runId, {
-            filesDiscovered: discovered,
-            filesIndexed: indexed,
-            filesFailed: failed,
-            structuredFiles,
-            fallbackFiles,
-            fallbackReasonsJson: JSON.stringify(fallbackReasons),
-            filesAdded,
-            filesUpdated,
-            filesUnchanged,
-            paginationComplete: true,
-            nextPageToken: null,
-          });
+          await checkpointSync(
+            runId,
+            {
+              filesDiscovered: discovered,
+              filesIndexed: indexed,
+              filesFailed: failed,
+              structuredFiles,
+              fallbackFiles,
+              fallbackReasonsJson: JSON.stringify(fallbackReasons),
+              filesAdded,
+              filesUpdated,
+              filesUnchanged,
+              paginationComplete: true,
+              nextPageToken: null,
+            },
+            budget,
+          );
           await reportProgress(onProgress, {
             ...baseProgress(),
             stage: "indexing",
@@ -459,22 +651,34 @@ export async function synchronizeGoogleDrive(
         hadContent = Boolean(
           previous && settledStatuses.includes(previous.indexStatus),
         );
+      // Durable in-progress marker: if this hop dies mid-file the row is
+      // already settled as failed, so the next hop's window differs and a
+      // repeatedly fatal window cannot rebuild itself identically forever.
+      // It is not a user-visible failure, so it records no failure row.
       await markFileFailed({
         connectorId: connector.id,
         workspaceId: connector.workspaceId,
         file,
         errorCode: "SYNC_FILE_INTERRUPTED",
+        recordFailure: false,
+        budget,
       });
       try {
         let structured = null;
         let structuralFallbackReason: string | null = null;
         try {
+          budget.spend(1);
           structured = await fetchStructuredGoogleFile(accessToken, file);
         } catch (error) {
           structuralFallbackReason = safeErrorCode(error);
         }
-        const exported =
-          structured ?? (await exportGoogleFile(accessToken, file));
+        let exported:
+          | Awaited<ReturnType<typeof fetchStructuredGoogleFile>>
+          | Awaited<ReturnType<typeof exportGoogleFile>> = structured;
+        if (!exported) {
+          budget.spend(1);
+          exported = await exportGoogleFile(accessToken, file);
+        }
         if (!exported) {
           await persistExtractedFile({
             connectorId: connector.id,
@@ -483,11 +687,12 @@ export async function synchronizeGoogleDrive(
             units: [],
             extractionMode: "unsupported",
             structuralFallbackReason,
+            budget,
           });
           return { outcome: "unsupported" as const, hadContent, unitCount: 0 };
         }
         const units = await extractDriveContent(file, exported);
-        await persistExtractedFile({
+        const persisted = await persistExtractedFile({
           connectorId: connector.id,
           workspaceId: connector.workspaceId,
           file,
@@ -498,14 +703,21 @@ export async function synchronizeGoogleDrive(
               ? "fallback"
               : "native",
           structuralFallbackReason,
+          budget,
         });
-        return {
-          outcome: "indexed" as const,
-          hadContent,
-          unitCount: units.length,
-          structured: Boolean(structured),
-          fallbackReason: structuralFallbackReason,
-        };
+        // A zero-unit extraction is STORED as `unsupported` (a scanned PDF is
+        // not searchable content), so it must be counted as unsupported too —
+        // counting it as indexed made the number contradict the same screen and
+        // shrink on the next hop.
+        return persisted.indexed
+          ? {
+              outcome: "indexed" as const,
+              hadContent,
+              unitCount: units.length,
+              structured: Boolean(structured),
+              fallbackReason: structuralFallbackReason,
+            }
+          : { outcome: "unsupported" as const, hadContent, unitCount: 0 };
       } catch (error) {
         const errorCode = safeErrorCode(error);
         await markFileFailed({
@@ -513,6 +725,7 @@ export async function synchronizeGoogleDrive(
           workspaceId: connector.workspaceId,
           file,
           errorCode,
+          budget,
         });
         return {
           outcome: "failed" as const,
@@ -560,15 +773,6 @@ export async function synchronizeGoogleDrive(
         }
         if (result.hadContent) filesUpdated += 1;
         else filesAdded += 1;
-        if (result.unitCount === 0)
-          enrichmentCandidates.push({
-            id: file.id,
-            name: file.name,
-            mimeType: file.mimeType,
-            unitCount: 0,
-            file,
-            countedUnsupported: false,
-          });
       }
       completionsSinceCheckpoint += 1;
       if (completionsSinceCheckpoint >= SYNC_BATCH_SIZE) {
@@ -580,7 +784,12 @@ export async function synchronizeGoogleDrive(
       initial: EXTRACTION_POOL_INITIAL,
       min: EXTRACTION_POOL_MIN,
       max: EXTRACTION_POOL_MAX,
-      shouldStop: () => Date.now() >= processingDeadline,
+      // Admission is bounded by aggregate in-flight export bytes as well as by
+      // slots, so a window of large PDFs cannot OOM the 128 MB isolate.
+      weightOf: (file: DriveFileMetadata) => driveFileBytes(file),
+      maxInFlightWeight: MAX_IN_FLIGHT_EXTRACTION_BYTES,
+      shouldStop: () =>
+        Date.now() >= processingDeadline || !budget.canSpend(SUBREQUESTS_PER_FILE),
       signalOf: (result: ExtractionResult) =>
         result.outcome === "failed"
           ? classifyPoolSignal(result.errorCode)
@@ -613,14 +822,15 @@ export async function synchronizeGoogleDrive(
           ...continuation.retryableFiles,
         ];
     if (retryCandidates.length && Date.now() < processingDeadline) {
-      await recordFileRetryAttempts(
-        connector.id,
-        retryCandidates.map((file) => file.id),
-      );
-      retried += retryCandidates.length;
       await runPool(
         retryCandidates,
         async (file) => {
+          // The retry budget is charged per ACTUAL attempt, inside the worker.
+          // Charging the whole candidate list up front burned MAX_FILE_RETRIES
+          // across two deadline-clipped hops with zero real re-extraction and
+          // failed extractable files permanently.
+          await recordFileRetryAttempts(connector.id, [file.id], budget);
+          retried += 1;
           const result = await extractFile(file);
           applyResult(file, result, "retry");
           return result;
@@ -637,15 +847,17 @@ export async function synchronizeGoogleDrive(
       for (const candidate of selectEnrichmentCandidates(
         enrichmentCandidates,
       )) {
-        if (Date.now() >= processingDeadline) break;
+        if (Date.now() >= processingDeadline || !budget.canSpend(3)) break;
         try {
-          const exported =
-            candidate.mimeType === "application/pdf"
-              ? await exportGoogleFile(accessToken, candidate.file)
-              : null;
+          budget.spend(1);
+          const exported = await exportGoogleFile(accessToken, candidate.file);
+          // No document bytes, no model call: a filename-only prompt leaks the
+          // filename for zero extraction value and can never yield content we
+          // are entitled to store as extracted.
+          if (!exported?.data) continue;
           const units = await enrichFile({
             file: candidate.file,
-            data: exported?.data,
+            data: exported.data,
             env: enrichmentEnv,
           });
           if (units?.length) {
@@ -656,6 +868,7 @@ export async function synchronizeGoogleDrive(
               units,
               extractionMode: "ai_enriched",
               structuralFallbackReason: null,
+              budget,
             });
             if (candidate.countedUnsupported) {
               filesUnsupported = Math.max(0, filesUnsupported - 1);
@@ -670,13 +883,22 @@ export async function synchronizeGoogleDrive(
     filesRemoved = await reconcileMissingSourceFiles(
       connector.id,
       new Set(inventory.files.map((file) => file.id)),
+      budget,
     );
-    const status = stoppedEarly
-      ? "partial"
-      : terminalSyncStatus({
-          filesIndexed: indexed,
-          filesFailed: failed,
-        });
+    if (budget.exhausted()) stoppedEarly = true;
+    const budgetLimited = budget.exhausted(),
+      status = stoppedEarly
+        ? "partial"
+        : terminalSyncStatus({
+            filesIndexed: indexed,
+            filesFailed: failed,
+          }),
+      stopReason = budgetLimited
+        ? "SYNC_SUBREQUEST_BUDGET_REACHED"
+        : "SYNC_TIME_BUDGET_REACHED";
+    // Committed rows, not the in-memory inventory length.
+    metadataIndexed = await countConnectorSourceFiles(connector.id);
+    budget.spend(1);
     await finishSync(runId, {
       status,
       filesDiscovered: discovered,
@@ -690,16 +912,13 @@ export async function synchronizeGoogleDrive(
       filesUnchanged,
       filesRemoved,
       paginationComplete: true,
-      errorCode: stoppedEarly ? "SYNC_TIME_BUDGET_REACHED" : undefined,
+      nextPageToken: null,
+      errorCode: stoppedEarly ? stopReason : undefined,
     });
     await setConnectorStatus(
       connector.id,
       "connected",
-      stoppedEarly
-        ? "SYNC_TIME_BUDGET_REACHED"
-        : status === "partial"
-          ? "SYNC_PARTIAL"
-          : null,
+      stoppedEarly ? stopReason : status === "partial" ? "SYNC_PARTIAL" : null,
     );
     return {
       status,
@@ -715,16 +934,19 @@ export async function synchronizeGoogleDrive(
       filesUnchanged,
       filesRemoved,
       paginationComplete: true,
+      discoveryResumable: false,
       filesProcessed,
       filesUnsupported,
       filesMetadataIndexed: metadataIndexed,
       filesDuplicate: duplicates,
       filesRetried: retried,
+      filesOversized: oversized,
       filesDeferred: Math.max(
         0,
         pendingFiles.length - (filesProcessed - filesUnchanged - duplicates),
       ),
       continuationNeeded: stoppedEarly,
+      subrequestsSpent: budget.spent,
     };
   } catch (error) {
     const status = terminalSyncStatus(

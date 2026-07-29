@@ -574,6 +574,9 @@ export const indexingJobs = sqliteTable(
     unchangedCount: integer("unchanged_count").notNull().default(0),
     duplicateCount: integer("duplicate_count").notNull().default(0),
     retriedCount: integer("retried_count").notNull().default(0),
+    // Files skipped because a single export would not fit in the isolate's
+    // memory budget. Distinct and counted, never silently dropped.
+    oversizedCount: integer("oversized_count").notNull().default(0),
     retryCount: integer("retry_count").notNull().default(0),
     continuationCount: integer("continuation_count").notNull().default(0),
     terminalReason: text("terminal_reason"),
