@@ -107,15 +107,23 @@ const worker = {
               jobId,
               continuationId,
               persistDispatch: () =>
-                fetch(new URL("/api/internal/indexing/dispatch", request.url), {
-                  method: "POST",
-                  headers: continuationHeaders,
-                }),
+                handler.fetch(
+                  new Request(
+                    new URL("/api/internal/indexing/dispatch", request.url),
+                    { method: "POST", headers: continuationHeaders },
+                  ),
+                  env,
+                  ctx,
+                ),
               startFreshWorker: () =>
-                fetch(new URL("/api/internal/indexing/continue", request.url), {
-                  method: "POST",
-                  headers: continuationHeaders,
-                }),
+                handler.fetch(
+                  new Request(
+                    new URL("/api/internal/indexing/continue", request.url),
+                    { method: "POST", headers: continuationHeaders },
+                  ),
+                  env,
+                  ctx,
+                ),
             }).catch(() => undefined),
           );
         }

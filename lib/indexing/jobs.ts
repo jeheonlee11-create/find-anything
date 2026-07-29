@@ -247,6 +247,52 @@ export function queueMessageFromEnqueueResult(input: {
   });
 }
 
+export async function resumePersistedContinuation(jobId: string) {
+  const db = await getDb(),
+    continuation = await db
+      .select({
+        id: indexingContinuations.id,
+        sequence: indexingContinuations.sequence,
+        attemptEpoch: indexingContinuations.attemptEpoch,
+      })
+      .from(indexingContinuations)
+      .where(
+        and(
+          eq(indexingContinuations.jobId, jobId),
+          eq(indexingContinuations.status, "persisted"),
+        ),
+      )
+      .orderBy(desc(indexingContinuations.sequence))
+      .get();
+  if (!continuation) return null;
+  const token = randomToken(),
+    tokenHash = await sha256(token),
+    now = new Date().toISOString(),
+    job = await db
+      .update(indexingJobs)
+      .set({
+        continuationTokenHash: tokenHash,
+        heartbeatAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(indexingJobs.id, jobId),
+          inArray(indexingJobs.status, [...resumable]),
+        ),
+      )
+      .returning({ id: indexingJobs.id })
+      .get();
+  if (!job) return null;
+  return {
+    jobId,
+    continuationToken: token,
+    continuationId: continuation.id,
+    continuationSequence: continuation.sequence,
+    attemptEpoch: continuation.attemptEpoch,
+  };
+}
+
 export async function leaseDueIndexingContinuations(input: {
   leaseOwner: string;
   limit?: number;

@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { isAuthFailure, requireApiActor } from "@/lib/auth/api-authorization";
 import { workspaceDashboard } from "@/lib/workspaces/repository";
-import { enqueueIndexingJob } from "@/lib/indexing/jobs";
+import {
+  enqueueIndexingJob,
+  resumePersistedContinuation,
+} from "@/lib/indexing/jobs";
 import { isIndexingJobStale } from "@/lib/indexing/job-lifecycle";
 
 export async function GET(
@@ -24,16 +27,17 @@ export async function GET(
       !dashboard.demoMode &&
       dashboard.connector &&
       job &&
-      ["queued", "running", "pausing", "stale"].includes(job.status) &&
-      isIndexingJobStale(job.heartbeatAt)
+      ["queued", "running", "pausing", "stale", "partial"].includes(job.status)
     ) {
-      const resumed = await enqueueIndexingJob({
-        workspaceId,
-        connectorId: dashboard.connector.id,
-        actorId: actor.actorId,
-      });
+      const resumed = isIndexingJobStale(job.heartbeatAt)
+        ? await enqueueIndexingJob({
+            workspaceId,
+            connectorId: dashboard.connector.id,
+            actorId: actor.actorId,
+          })
+        : await resumePersistedContinuation(job.id);
       if (
-        resumed.continuationId &&
+        resumed?.continuationId &&
         resumed.continuationSequence &&
         resumed.attemptEpoch &&
         resumed.continuationToken
