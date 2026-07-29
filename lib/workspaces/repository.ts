@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   connectors,
@@ -12,6 +12,7 @@ import {
 } from "@/db/schema";
 import { isDemoWorkspace, type AuthenticatedActor } from "@/lib/auth/api-authorization";
 import { recoverStaleSyncRuns } from "@/lib/google-drive/repository";
+import { indexingRateFromHops } from "@/lib/indexing/job-lifecycle";
 export async function ensureUser(actor: AuthenticatedActor) {
   const db = await getDb(),
     now = new Date().toISOString();
@@ -168,6 +169,11 @@ export async function workspaceDashboard(actorId: string, workspaceId: string) {
           failedCount: indexingJobs.failedCount,
           structuralCount: indexingJobs.structuralCount,
           fallbackCount: indexingJobs.fallbackCount,
+          metadataIndexedCount: indexingJobs.metadataIndexedCount,
+          contentIndexedCount: indexingJobs.contentIndexedCount,
+          unchangedCount: indexingJobs.unchangedCount,
+          duplicateCount: indexingJobs.duplicateCount,
+          retriedCount: indexingJobs.retriedCount,
           lastErrorCode: indexingJobs.lastErrorCode,
           terminalReason: indexingJobs.terminalReason,
           heartbeatAt: indexingJobs.heartbeatAt,
@@ -189,11 +195,53 @@ export async function workspaceDashboard(actorId: string, workspaceId: string) {
         .limit(1)
         .then((rows) => rows[0] ?? null)
     : null;
+  // Trailing completed hops carry persisted processed-count snapshots; the
+  // files/min rate, ETA, and "last durable checkpoint" all derive from them.
+  const completedHops = indexingJobBase
+    ? await db
+        .select({
+          completedAt: indexingContinuations.completedAt,
+          processedCountAtCompletion:
+            indexingContinuations.processedCountAtCompletion,
+        })
+        .from(indexingContinuations)
+        .where(
+          and(
+            eq(indexingContinuations.jobId, indexingJobBase.id),
+            eq(indexingContinuations.status, "completed"),
+          ),
+        )
+        .orderBy(desc(indexingContinuations.sequence))
+        .limit(6)
+    : [];
   const indexingJob = indexingJobBase
     ? {
         ...indexingJobBase,
         continuationStatus: continuation?.status ?? null,
+        rate: indexingRateFromHops(
+          completedHops,
+          Math.max(
+            0,
+            indexingJobBase.discoveredCount - indexingJobBase.processedCount,
+          ),
+        ),
       }
     : null;
-  return { workspace, demoMode, connector: connector?{...connector,scopeVerified:demoMode||new Set(connector.grantedScopes.split(/\s+/)).has("https://www.googleapis.com/auth/drive.readonly" )}:null, files, latestSync, indexingJob };
+  // Progressive search availability, straight from persisted source_files
+  // rows: metadata rows are name-searchable, indexed rows are full-text ready.
+  const searchIndex = (await db
+    .select({
+      total: sql<number>`count(*)`,
+      nameSearchable: sql<number>`coalesce(sum(case when ${sourceFiles.searchableStatus} = 'searchable' then 1 else 0 end), 0)`,
+      fullTextReady: sql<number>`coalesce(sum(case when ${sourceFiles.indexStatus} = 'indexed' then 1 else 0 end), 0)`,
+    })
+    .from(sourceFiles)
+    .where(
+      and(
+        eq(sourceFiles.workspaceId, workspaceId),
+        eq(sourceFiles.trashed, false),
+      ),
+    )
+    .get()) ?? { total: 0, nameSearchable: 0, fullTextReady: 0 };
+  return { workspace, demoMode, connector: connector?{...connector,scopeVerified:demoMode||new Set(connector.grantedScopes.split(/\s+/)).has("https://www.googleapis.com/auth/drive.readonly" )}:null, files, latestSync, indexingJob, searchIndex };
 }

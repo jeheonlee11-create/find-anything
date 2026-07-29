@@ -732,6 +732,11 @@ export async function indexingJobForWorkspace(
       failedCount: indexingJobs.failedCount,
       structuralCount: indexingJobs.structuralCount,
       fallbackCount: indexingJobs.fallbackCount,
+      metadataIndexedCount: indexingJobs.metadataIndexedCount,
+      contentIndexedCount: indexingJobs.contentIndexedCount,
+      unchangedCount: indexingJobs.unchangedCount,
+      duplicateCount: indexingJobs.duplicateCount,
+      retriedCount: indexingJobs.retriedCount,
       retryCount: indexingJobs.retryCount,
       continuationCount: indexingJobs.continuationCount,
       terminalReason: indexingJobs.terminalReason,
@@ -857,6 +862,11 @@ export async function runIndexingJob(
             failedCount: progress.filesFailed,
             structuralCount: progress.structuredFiles,
             fallbackCount: progress.fallbackFiles,
+            metadataIndexedCount: progress.filesMetadataIndexed,
+            contentIndexedCount: progress.filesIndexed,
+            unchangedCount: progress.filesUnchanged,
+            duplicateCount: progress.filesDuplicate,
+            // retriedCount accumulates across hops at continuation completion
             heartbeatAt: heartbeat,
             updatedAt: heartbeat,
           })
@@ -921,6 +931,11 @@ export async function runIndexingJob(
         failedCount: result.filesFailed,
         structuralCount: result.structuredFiles,
         fallbackCount: result.fallbackFiles,
+        metadataIndexedCount: result.filesMetadataIndexed,
+        contentIndexedCount: result.filesIndexed,
+        unchangedCount: result.filesUnchanged,
+        duplicateCount: result.filesDuplicate,
+        retriedCount: sql`${indexingJobs.retriedCount} + ${result.filesRetried}`,
         continuationCount: attemptNumber,
         heartbeatAt: finishedAt,
         completedAt: continuationNeeded ? null : finishedAt,
@@ -942,7 +957,13 @@ export async function runIndexingJob(
         .set({ status: "completed", completedAt: finishedAt, heartbeatAt: finishedAt })
         .where(eq(indexingJobAttempts.id, candidateAttemptId));
     const completeContinuation = db.update(indexingContinuations)
-        .set({ status: "completed", completedAt: finishedAt })
+        .set({
+          status: "completed",
+          completedAt: finishedAt,
+          // Persisted hop stats: files/min rates derive from deltas between
+          // these snapshots on trailing completed continuations.
+          processedCountAtCompletion: result.filesProcessed,
+        })
         .where(
           and(
             eq(indexingContinuations.id, continuationId),
@@ -1003,6 +1024,9 @@ export async function runIndexingJob(
           updated: result.filesUpdated,
           unchanged: result.filesUnchanged,
           deleted: result.filesRemoved,
+          metadataIndexed: result.filesMetadataIndexed,
+          duplicate: result.filesDuplicate,
+          retried: result.filesRetried,
         },
         finishedAt,
       });

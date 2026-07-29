@@ -55,12 +55,28 @@ type Dashboard = {
     failedCount: number;
     structuralCount: number;
     fallbackCount: number;
+    metadataIndexedCount: number;
+    contentIndexedCount: number;
+    unchangedCount: number;
+    duplicateCount: number;
+    retriedCount: number;
     lastErrorCode: string | null;
     terminalReason: string | null;
     heartbeatAt: string | null;
     completedAt: string | null;
     updatedAt: string;
     continuationStatus: string | null;
+    rate: {
+      filesPerMinute: number | null;
+      etaSeconds: number | null;
+      completedHops: number;
+      lastCheckpointAt: string | null;
+    } | null;
+  };
+  searchIndex?: {
+    total: number;
+    nameSearchable: number;
+    fullTextReady: number;
   };
 };
 export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
@@ -327,6 +343,19 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
                 : `${remaining} remaining`}
             </p>
             {acknowledgement && <p className="indexing-ack">{acknowledgement}</p>}
+            {data.searchIndex && data.searchIndex.total > 0 && (
+              <p className="indexing-search-availability">
+                Searchable by name ({data.searchIndex.nameSearchable}) · full-text ready ({data.searchIndex.fullTextReady} of {data.searchIndex.total})
+              </p>
+            )}
+            {job.rate?.filesPerMinute !== null && job.rate?.filesPerMinute !== undefined && (
+              <p className="indexing-rate">
+                {job.rate.filesPerMinute} files/min over the last {job.rate.completedHops} checkpoints
+                {job.rate.etaSeconds !== null && activeJob
+                  ? ` · about ${friendlyEta(job.rate.etaSeconds)} remaining`
+                  : ""}
+              </p>
+            )}
             {job.discoveryStatus === "complete" && job.discoveredCount > 0 && (
               <progress value={job.processedCount} max={job.discoveredCount}>
                 {job.processedCount} of {job.discoveredCount}
@@ -337,12 +366,17 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
               <dl>
                 <div><dt>Current stage</dt><dd>{friendlyStage(job.stage)}</dd></div>
                 <div><dt>Last activity</dt><dd>{job.heartbeatAt ? new Date(job.heartbeatAt).toLocaleString() : "Not started"}</dd></div>
+                <div><dt>Last durable checkpoint</dt><dd>{job.rate?.lastCheckpointAt ? new Date(job.rate.lastCheckpointAt).toLocaleString() : "No completed checkpoint yet"}</dd></div>
                 <div><dt>Files discovered</dt><dd>{job.discoveryStatus === "complete" ? job.discoveredCount : "Still discovering"}</dd></div>
+                <div><dt>Metadata indexed</dt><dd>{job.metadataIndexedCount}</dd></div>
+                <div><dt>Content indexed</dt><dd>{job.contentIndexedCount}</dd></div>
                 <div><dt>Files processed</dt><dd>{job.processedCount}</dd></div>
-                <div><dt>Files indexed</dt><dd>{job.indexedCount}</dd></div>
+                <div><dt>Files unchanged</dt><dd>{job.unchangedCount}</dd></div>
+                <div><dt>Duplicate content</dt><dd>{job.duplicateCount}</dd></div>
                 <div><dt>Files skipped</dt><dd>{job.skippedCount}</dd></div>
                 <div><dt>Files unavailable</dt><dd>{job.inaccessibleCount}</dd></div>
                 <div><dt>Files failed</dt><dd>{job.failedCount}</dd></div>
+                <div><dt>Retries attempted</dt><dd>{job.retriedCount}</dd></div>
                 {job.lastErrorCode && <div><dt>Error code</dt><dd>{job.lastErrorCode}</dd></div>}
               </dl>
             </details>
@@ -482,6 +516,11 @@ function indexingProgressLabel(job: NonNullable<Dashboard["indexingJob"]>) {
 function isJobDelayed(job: NonNullable<Dashboard["indexingJob"]>) {
   if (!isActiveJob(job.status) || !job.heartbeatAt) return false;
   return Date.now() - Date.parse(job.heartbeatAt) >= 120_000;
+}
+function friendlyEta(seconds: number) {
+  if (seconds < 60) return "a minute";
+  if (seconds < 3600) return `${Math.ceil(seconds / 60)} min`;
+  return `${Math.round((seconds / 3600) * 10) / 10} h`;
 }
 function friendlyStage(stage: string) {
   return {

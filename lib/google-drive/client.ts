@@ -46,6 +46,7 @@ export interface DriveInventoryProgress {
   nextPageToken: string | null;
   paginationComplete: boolean;
   incompleteSearch: boolean;
+  pageFiles: DriveFileMetadata[];
 }
 export async function listAllDriveFiles(
   accessToken: string,
@@ -78,6 +79,7 @@ export async function listAllDriveFiles(
       nextPageToken: pageToken ?? null,
       paginationComplete: !pageToken && !incompleteSearch,
       incompleteSearch,
+      pageFiles: page.files ?? [],
     });
   } while (pageToken);
   return { files, incompleteSearch };
