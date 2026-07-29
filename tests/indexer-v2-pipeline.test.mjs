@@ -3,7 +3,10 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import {
   isExtractableDriveMimeType,
+  isOversizedForExtraction,
+  MAX_EXTRACTABLE_FILE_BYTES,
   MAX_FILE_RETRIES,
+  MAX_IN_FLIGHT_EXTRACTION_BYTES,
   planSyncContinuation,
   sortPendingDriveFiles,
 } from "../lib/google-drive/sync-lifecycle.ts";
@@ -14,6 +17,15 @@ import {
   selectEnrichmentCandidates,
 } from "../lib/indexing/enrichment.ts";
 import { indexingRateFromHops } from "../lib/indexing/job-lifecycle.ts";
+import {
+  createSubrequestBudget,
+  DEFAULT_SUBREQUEST_BUDGET,
+  subrequestBudgetLimit,
+  SUBREQUESTS_PER_FILE,
+  workWindowFromBudget,
+} from "../lib/indexing/subrequest-budget.ts";
+import { listAllDriveFiles } from "../lib/google-drive/client.ts";
+import { searchWorkspaceFiles } from "../lib/workspace-search/core.ts";
 
 const NOW = Date.parse("2026-07-29T00:00:00.000Z");
 const DEFAULT_POOL = {
@@ -498,19 +510,26 @@ test("the staged pipeline is wired through sync, repository, jobs, and the dashb
       ),
       readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     ]);
-  // Stage 1: metadata-first bulk upserts during pagination.
+  // Stage 1: metadata-first bulk upserts during pagination, with a durable
+  // page cursor so a limited hop resumes instead of re-listing from page 1.
   assert.match(sync, /persistDiscoveredFileMetadata/);
-  assert.match(repository, /DB_BATCH_MAX_STATEMENTS = 40/);
+  assert.match(sync, /latestDiscoveryCheckpoint/);
+  assert.match(sync, /nextPageToken: inventory\.nextPageToken/);
+  assert.match(repository, /DB_BATCH_MAX_STATEMENTS = D1_MAX_STATEMENTS_PER_BATCH/);
   assert.match(repository, /indexStatus: "metadata"/);
   // Stage 2: duplicates refresh metadata without re-extraction.
   assert.match(sync, /refreshFileMetadataBatch/);
-  // Stages 3-5: priority-ordered bounded window through the adaptive pool
-  // with per-file transactional writes.
-  assert.match(sync, /WORK_WINDOW_FILES = 500/);
+  // Stages 3-5: priority-ordered window sized by the remaining subrequest
+  // budget (never a hardcoded 500) through the adaptive pool with per-file
+  // transactional writes.
+  assert.match(sync, /workWindowFromBudget\(budget/);
+  assert.match(sync, /cap: WORK_WINDOW_MAX_FILES/);
   assert.match(sync, /EXTRACTION_POOL_INITIAL = 20/);
+  assert.match(sync, /maxInFlightWeight: MAX_IN_FLIGHT_EXTRACTION_BYTES/);
   assert.match(sync, /sortPendingDriveFiles/);
   assert.match(sync, /runPool\(/);
   assert.match(repository, /runBatchChunks/);
+  assert.match(repository, /rowsPerStatementForTable|statement-builders/);
   // Stage 6: enrichment strictly flag-gated after content indexing.
   assert.match(sync, /enrichmentEnabled\(/);
   assert.match(sync, /"ai_enriched"/);
@@ -521,8 +540,11 @@ test("the staged pipeline is wired through sync, repository, jobs, and the dashb
   // come from persisted state.
   assert.match(jobs, /processedCountAtCompletion: result\.filesProcessed/);
   assert.match(jobs, /metadataIndexedCount/);
-  assert.match(jobs, /duplicateCount/);
-  assert.match(jobs, /retriedCount/);
+  assert.match(jobs, /duplicateCount: accumulatedCounter\(/);
+  assert.match(jobs, /retriedCount: accumulatedCounter\(/);
+  assert.match(jobs, /monotonic\(\s*indexingJobs\.processedCount/);
+  assert.match(jobs, /continuationExecutionFence\(/);
+  assert.match(jobs, /inArray\(indexingJobs\.id, fencedJobIds\)/);
   assert.match(workspaces, /indexingRateFromHops/);
   assert.match(workspaces, /searchIndex/);
   assert.match(dashboard, /Searchable by name \(\{data\.searchIndex\.nameSearchable\}\)/);
@@ -557,4 +579,428 @@ test("migration 0019 is additive and forward-only", async () => {
   assert.match(migration, /ALTER TABLE `source_files` ADD `retry_count` integer DEFAULT 0 NOT NULL/);
   assert.match(migration, /ALTER TABLE `indexing_continuations` ADD `processed_count_at_completion` integer/);
   assert.doesNotMatch(migration, /DROP|RENAME|DELETE/i);
+});
+
+// ---------------------------------------------------------------------------
+// Regressions for the confirmed indexer-v2 defects.
+// ---------------------------------------------------------------------------
+
+test("the subrequest budget is conservative, env-configurable, and drives the work window", () => {
+  assert.equal(subrequestBudgetLimit(undefined), DEFAULT_SUBREQUEST_BUDGET);
+  assert.equal(subrequestBudgetLimit({}), DEFAULT_SUBREQUEST_BUDGET);
+  assert.equal(subrequestBudgetLimit({ INDEXING_SUBREQUEST_BUDGET: "nope" }), 45);
+  assert.equal(subrequestBudgetLimit({ INDEXING_SUBREQUEST_BUDGET: "900" }), 900);
+  // Clamped into a sane range in both directions.
+  assert.equal(subrequestBudgetLimit({ INDEXING_SUBREQUEST_BUDGET: "1" }), 12);
+  assert.equal(subrequestBudgetLimit({ INDEXING_SUBREQUEST_BUDGET: "100000" }), 1_000);
+  const budget = createSubrequestBudget({ limit: 45, reserve: 8 });
+  assert.equal(budget.remaining, 45);
+  assert.equal(budget.available, 37);
+  // The window is DERIVED, never the hardcoded 500 that blew the limit.
+  const freePlanWindow = workWindowFromBudget(budget, {
+    perFile: SUBREQUESTS_PER_FILE,
+    cap: 500,
+  });
+  assert.equal(freePlanWindow, Math.floor(37 / SUBREQUESTS_PER_FILE));
+  assert.ok(freePlanWindow < 500);
+  // A paid-plan budget scales the window up by an order of magnitude.
+  const paid = createSubrequestBudget({ limit: 1_000, reserve: 8 });
+  const paidWindow = workWindowFromBudget(paid, {
+    perFile: SUBREQUESTS_PER_FILE,
+    cap: 500,
+  });
+  assert.equal(paidWindow, Math.floor(992 / SUBREQUESTS_PER_FILE));
+  assert.ok(paidWindow > freePlanWindow * 10);
+  // The documented 500-file window remains a hard upper bound.
+  const huge = createSubrequestBudget({ limit: 1_000, reserve: 0 });
+  assert.equal(workWindowFromBudget(huge, { perFile: 1, cap: 500 }), 500);
+  budget.spend(37);
+  assert.equal(budget.exhausted(), true);
+  assert.equal(budget.canSpend(1), false);
+  assert.equal(workWindowFromBudget(budget, { perFile: SUBREQUESTS_PER_FILE }), 0);
+  // Exhaustion is a state to observe, never a throw.
+  budget.spend(100);
+  assert.equal(budget.remaining, 0);
+});
+
+/** Synthetic Drive pagination: 1,000 files per page, no network. */
+function fakeDriveFetch(pageCount, requests) {
+  return async (url) => {
+    const parsed = new URL(url);
+    const token = parsed.searchParams.get("pageToken");
+    const page = token ? Number(token.replace("page-", "")) : 0;
+    requests.push(token ?? "page-0");
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        files: Array.from({ length: 3 }, (_, index) => ({
+          id: `p${page}-f${index}`,
+          name: `File ${page}-${index}`,
+          mimeType: "application/pdf",
+          modifiedTime: "2026-07-01T00:00:00.000Z",
+        })),
+        nextPageToken: page + 1 < pageCount ? `page-${page + 1}` : undefined,
+      }),
+    };
+  };
+}
+
+test("a budget-limited discovery hop checkpoints its cursor and the next hop resumes there", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = fakeDriveFetch(6, requests);
+  try {
+    const budget = createSubrequestBudget({ limit: 12, reserve: 8 });
+    const first = await listAllDriveFiles("token", undefined, {
+      onRequest: () => budget.spend(1),
+      shouldStop: () => budget.exhausted(),
+    });
+    // Stopped cleanly on budget, with a resumable cursor and no throw.
+    assert.equal(first.paginationComplete, false);
+    assert.equal(first.stoppedEarly, true);
+    assert.equal(first.resumed, false);
+    assert.ok(first.nextPageToken);
+    assert.ok(first.files.length > 0);
+    const pagesInFirstHop = requests.length;
+    assert.ok(pagesInFirstHop < 6, "budget should stop pagination early");
+    // The next hop resumes AT THE SAVED TOKEN instead of re-listing page 1.
+    const resumeBudget = createSubrequestBudget({ limit: 60, reserve: 8 });
+    const second = await listAllDriveFiles("token", undefined, {
+      pageToken: first.nextPageToken,
+      discoveredBefore: first.files.length,
+      onRequest: () => resumeBudget.spend(1),
+      shouldStop: () => resumeBudget.exhausted(),
+    });
+    assert.equal(second.resumed, true);
+    assert.equal(second.paginationComplete, true);
+    assert.equal(requests.slice(pagesInFirstHop)[0], first.nextPageToken);
+    assert.equal(requests.filter((token) => token === "page-0").length, 1);
+    // Every page was listed exactly once across the two hops.
+    assert.equal(new Set(requests).size, 6);
+    assert.equal(first.files.length + second.files.length, 18);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("resumed discovery reports cumulative progress, never a sawtooth back to zero", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = fakeDriveFetch(4, []);
+  try {
+    const seen = [];
+    await listAllDriveFiles("token", (progress) => {
+      seen.push(progress.filesDiscovered);
+    }, { pageToken: "page-2", discoveredBefore: 6 });
+    assert.deepEqual(seen, [9, 12]);
+    assert.ok(seen.every((value, index) => index === 0 || value > seen[index - 1]));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("duplicate classification requires content this pipeline actually persisted", () => {
+  const inventory = [
+    { id: "never-indexed", modifiedTime: "2026-07-20T00:00:00.000Z", md5Checksum: "md5-a" },
+    { id: "really-indexed", modifiedTime: "2026-07-20T00:00:00.000Z", md5Checksum: "md5-b" },
+  ];
+  const plan = planSyncContinuation(inventory, [
+    // A metadata/failed row whose checksum was written at discovery time: it
+    // has NEVER had content extracted, so it must be re-extracted, not
+    // silently classified as a duplicate and skipped forever.
+    {
+      sourceId: "never-indexed",
+      modifiedAt: "2026-07-01T00:00:00.000Z",
+      indexStatus: "failed",
+      extractionMode: null,
+      contentHash: "md5-a",
+      retryCount: 0,
+    },
+    {
+      sourceId: "really-indexed",
+      modifiedAt: "2026-07-01T00:00:00.000Z",
+      indexStatus: "indexed",
+      extractionMode: "native",
+      contentHash: "md5-b",
+      retryCount: 0,
+    },
+  ]);
+  assert.deepEqual(plan.duplicateFiles.map((file) => file.id), ["really-indexed"]);
+  assert.deepEqual(plan.pendingFiles.map((file) => file.id), ["never-indexed"]);
+  assert.equal(plan.filesDuplicate, 1);
+  // Unsupported rows have no persisted content either.
+  const unsupportedPlan = planSyncContinuation(
+    [{ id: "scan", modifiedTime: "2026-07-20T00:00:00.000Z", md5Checksum: "md5-c" }],
+    [{ sourceId: "scan", modifiedAt: "2026-07-01T00:00:00.000Z", indexStatus: "unsupported", extractionMode: "unsupported", contentHash: "md5-c", retryCount: 0 }],
+  );
+  assert.equal(unsupportedPlan.filesDuplicate, 0);
+  assert.equal(unsupportedPlan.pendingFiles.length, 1);
+});
+
+test("unchanged means skipped since a PRIOR sync, not indexed by this run", () => {
+  const inventory = Array.from({ length: 3 }, (_, index) => ({
+    id: `doc-${index}`,
+    modifiedTime: "2026-07-01T00:00:00.000Z",
+  }));
+  const previous = [
+    // Settled long before this job started.
+    { sourceId: "doc-0", modifiedAt: "2026-07-01T00:00:00.000Z", indexStatus: "indexed", extractionMode: "native", updatedAt: "2026-06-01T00:00:00.000Z" },
+    // Settled by earlier hops of the job that is running right now.
+    { sourceId: "doc-1", modifiedAt: "2026-07-01T00:00:00.000Z", indexStatus: "indexed", extractionMode: "native", updatedAt: "2026-07-29T00:05:00.000Z" },
+    { sourceId: "doc-2", modifiedAt: "2026-07-01T00:00:00.000Z", indexStatus: "indexed", extractionMode: "native", updatedAt: "2026-07-29T00:06:00.000Z" },
+  ];
+  const plan = planSyncContinuation(inventory, previous, {
+    runStartedAt: "2026-07-29T00:00:00.000Z",
+  });
+  assert.equal(plan.filesProcessed, 3);
+  assert.equal(plan.filesUnchanged, 1);
+  assert.equal(plan.filesSettledThisRun, 2);
+  // Without a run start the caller gets the old total (back-compatible).
+  assert.equal(planSyncContinuation(inventory, previous).filesUnchanged, 3);
+});
+
+test("the extraction pool admits by aggregate in-flight bytes, not slots alone", async () => {
+  const megabyte = 1024 * 1024;
+  const files = Array.from({ length: 20 }, (_, index) => ({
+    id: `pdf-${index}`,
+    size: String(10 * megabyte),
+  }));
+  let concurrent = 0;
+  let peakConcurrent = 0;
+  const stats = await runPool(
+    files,
+    async () => {
+      concurrent += 1;
+      peakConcurrent = Math.max(peakConcurrent, concurrent);
+      await Promise.resolve();
+      concurrent -= 1;
+      return "ok";
+    },
+    {
+      ...DEFAULT_POOL,
+      weightOf: (file) => Number(file.size),
+      maxInFlightWeight: MAX_IN_FLIGHT_EXTRACTION_BYTES,
+    },
+  );
+  assert.equal(stats.completed, 20);
+  // 20 slots x 10 MB would be 200 MB inside a 128 MB isolate.
+  assert.ok(
+    stats.peakInFlightWeight <= MAX_IN_FLIGHT_EXTRACTION_BYTES,
+    `peak in-flight ${stats.peakInFlightWeight} exceeded the cap`,
+  );
+  assert.ok(peakConcurrent <= 3, `admitted ${peakConcurrent} large files at once`);
+  assert.ok(stats.weightWaits > 0);
+  // A single item heavier than the whole cap still runs, alone: no deadlock.
+  const huge = await runPool(
+    [{ id: "huge", size: String(400 * megabyte) }],
+    async () => "ok",
+    { ...DEFAULT_POOL, weightOf: (file) => Number(file.size), maxInFlightWeight: MAX_IN_FLIGHT_EXTRACTION_BYTES },
+  );
+  assert.equal(huge.completed, 1);
+});
+
+test("files above the per-file memory cap are identified deterministically", () => {
+  const big = { id: "big", size: String(MAX_EXTRACTABLE_FILE_BYTES + 1) };
+  const ok = { id: "ok", size: String(MAX_EXTRACTABLE_FILE_BYTES) };
+  assert.equal(isOversizedForExtraction(big), true);
+  assert.equal(isOversizedForExtraction(ok), false);
+  assert.equal(isOversizedForExtraction({ id: "native" }), false);
+  // The per-file cap must fit inside the aggregate cap so one file can run.
+  assert.ok(MAX_EXTRACTABLE_FILE_BYTES < MAX_IN_FLIGHT_EXTRACTION_BYTES);
+});
+
+test("metadata-only rows are searchable by name and never imply content was read", () => {
+  const file = (id, indexStatus, name, unitText) => ({
+    id,
+    workspaceId: "ws_a",
+    connectorId: "c",
+    sourceId: id,
+    name,
+    mimeType: "application/pdf",
+    modifiedAt: "2026-07-01T00:00:00.000Z",
+    webViewLink: null,
+    indexStatus,
+    extractionError: null,
+    extractionMode: indexStatus === "indexed" ? "native" : null,
+    structuralFallbackReason: null,
+    units: unitText
+      ? [{ id: `u_${id}`, unitType: "paragraph", text: unitText, structuralLocation: { page: 1 }, contentHash: `h_${id}` }]
+      : [],
+  });
+  const files = [
+    file("indexed", "indexed", "Roadmap review", "the quarterly roadmap body"),
+    file("meta", "metadata", "Roadmap appendix", null),
+    file("unrelated", "metadata", "Payroll notes", null),
+  ];
+  const result = searchWorkspaceFiles({
+    workspaceId: "ws_a",
+    files,
+    query: "roadmap",
+    mode: "best",
+    fileType: "all",
+  });
+  const ids = result.results.map((row) => row.id);
+  // The dashboard's "Searchable by name (N)" claim is now true.
+  assert.ok(ids.includes("meta"), "metadata-only row must be name-searchable");
+  assert.ok(ids.includes("indexed"));
+  assert.ok(!ids.includes("unrelated"));
+  const metaResult = result.results.find((row) => row.id === "meta");
+  assert.equal(metaResult.matchScope, "name_only");
+  assert.equal(metaResult.snippet, null);
+  assert.deepEqual(metaResult.citations, []);
+  assert.ok(metaResult.explanation.includes("name match (content not indexed yet)"));
+  const indexedResult = result.results.find((row) => row.id === "indexed");
+  assert.equal(indexedResult.matchScope, "content");
+  // Coverage keeps 'metadata' strictly distinct from 'indexed'.
+  assert.equal(result.coverage.indexedFiles, 1);
+  assert.equal(result.coverage.metadataOnlyFiles, 2);
+  assert.equal(result.coverage.filesSearched, 1);
+  assert.equal(result.coverage.nameOnlyFilesSearched, 2);
+  assert.equal(result.coverage.snapshot.counts.indexed, 1);
+  assert.ok(result.coverage.incompleteReasons.some((reason) => reason.includes("name only")));
+});
+
+test("content and phrase matching still require extracted content", () => {
+  const metadataOnly = {
+    id: "meta",
+    workspaceId: "ws_a",
+    connectorId: "c",
+    sourceId: "meta",
+    name: "Budget deck",
+    mimeType: "application/pdf",
+    modifiedAt: "2026-07-01T00:00:00.000Z",
+    webViewLink: null,
+    indexStatus: "metadata",
+    extractionError: null,
+    extractionMode: null,
+    structuralFallbackReason: null,
+    units: [],
+  };
+  // A term that only a body could contain never matches a name-only row.
+  const body = searchWorkspaceFiles({
+    workspaceId: "ws_a",
+    files: [metadataOnly],
+    query: "amortization",
+    mode: "best",
+    fileType: "all",
+  });
+  assert.deepEqual(body.results, []);
+  // An empty query must not surface unread files either.
+  const blank = searchWorkspaceFiles({
+    workspaceId: "ws_a",
+    files: [metadataOnly],
+    query: "",
+    mode: "best",
+    fileType: "all",
+  });
+  assert.deepEqual(blank.results, []);
+  // Two-term queries still require BOTH terms in the name.
+  const partial = searchWorkspaceFiles({
+    workspaceId: "ws_a",
+    files: [metadataOnly],
+    query: "budget amortization",
+    mode: "best",
+    fileType: "all",
+  });
+  assert.deepEqual(partial.results, []);
+});
+
+test("enrichment never sends a filename-only prompt and never invents content", async () => {
+  let calls = 0;
+  const countingFetch = async () => {
+    calls += 1;
+    return { ok: true, json: async () => ({ content: [{ type: "text", text: "invented" }] }) };
+  };
+  // Enabled, but no document bytes: no network call, no units, no egress.
+  const withoutData = await enrichFile({
+    file: { id: "img", name: "secret-acquisition-plan.png", mimeType: "image/png" },
+    env: { INDEXING_AI_ENRICHMENT: "claude", ANTHROPIC_API_KEY: "sk-test" },
+    fetchImpl: countingFetch,
+  });
+  assert.equal(withoutData, null);
+  assert.equal(calls, 0);
+  // An unsupported media type with bytes is also refused rather than described.
+  const unsupportedMedia = await enrichFile({
+    file: { id: "zip", name: "archive.zip", mimeType: "application/zip" },
+    data: new TextEncoder().encode("PK").buffer,
+    env: { INDEXING_AI_ENRICHMENT: "claude", ANTHROPIC_API_KEY: "sk-test" },
+    fetchImpl: countingFetch,
+  });
+  assert.equal(unsupportedMedia, null);
+  assert.equal(calls, 0);
+  // Real document bytes: exactly one call, and the bytes are in the payload.
+  const withData = await enrichFile({
+    file: { id: "scan", name: "scan.pdf", mimeType: "application/pdf" },
+    data: new TextEncoder().encode("%PDF-1.4").buffer,
+    env: { INDEXING_AI_ENRICHMENT: "claude", ANTHROPIC_API_KEY: "sk-test" },
+    fetchImpl: countingFetch,
+  });
+  assert.equal(calls, 1);
+  assert.equal(withData.length, 1);
+});
+
+test("the hop wires budget exhaustion to a checkpoint and retries to real attempts", async () => {
+  const sync = await readFile(
+    new URL("../lib/google-drive/sync.ts", import.meta.url),
+    "utf8",
+  );
+  // Budget exhaustion sets the resumable flag; it never throws.
+  assert.match(sync, /if \(budget\.exhausted\(\)\) stoppedEarly = true;/);
+  assert.match(sync, /SYNC_SUBREQUEST_BUDGET_REACHED/);
+  assert.match(sync, /DISCOVERY_BUDGET_CHECKPOINT/);
+  assert.doesNotMatch(sync, /throw new Error\("SUBREQUEST/);
+  // The retry budget is charged inside the worker, per real attempt.
+  assert.match(
+    sync,
+    /await recordFileRetryAttempts\(connector\.id, \[file\.id\], budget\);\s*\n\s*retried \+= 1;/,
+  );
+  // A partial or resumed inventory never plans, tombstones, or reconciles.
+  assert.match(sync, /if \(!inventory\.paginationComplete \|\| inventory\.resumed\)/);
+  // Enrichment only runs against fetched document bytes.
+  assert.match(sync, /if \(!exported\?\.data\) continue;/);
+  // metadataIndexedCount comes from committed rows.
+  assert.match(sync, /metadataIndexed = await countConnectorSourceFiles\(connector\.id\)/);
+  assert.doesNotMatch(sync, /metadataIndexed = discovered/);
+});
+
+test("no counter write in a continuation hop can lower a persisted value", async () => {
+  const jobs = await readFile(
+    new URL("../lib/indexing/jobs.ts", import.meta.url),
+    "utf8",
+  );
+  // Only the two indexing_jobs writes inside a hop matter here: the in-hop
+  // heartbeat and the end-of-hop completion.
+  const counterWrites = [...jobs.matchAll(/\.update\(indexingJobs\)\s*\n?\s*\.?set\(\{([\s\S]*?)\n\s*\}\)/g)]
+    .map((match) => match[1])
+    .filter((body) => body.includes("processedCount"));
+  assert.equal(counterWrites.length, 2, "expected the heartbeat and completion writes");
+  // Every write of a monotonically growing counter goes through monotonic();
+  // only failedCount may fall, and only on a hop that planned the inventory.
+  for (const body of counterWrites)
+    for (const column of [
+      "processedCount",
+      "discoveredCount",
+      "indexedCount",
+      "unsupportedCount",
+      "skippedCount",
+      "inaccessibleCount",
+      "structuralCount",
+      "fallbackCount",
+      "metadataIndexedCount",
+      "contentIndexedCount",
+      "unchangedCount",
+    ]) {
+      assert.match(body, new RegExp(`${column}: monotonic\\(`), `${column} is written without a monotonic guard`);
+      assert.doesNotMatch(
+        body,
+        new RegExp(`\\n\\s*${column}: (result|progress)\\.`),
+        `${column} has a raw write that can lower the persisted value`,
+      );
+    }
+  assert.match(jobs, /failedCount: result\.plannedInventory\s*\n\s*\? result\.filesFailed/);
+  // Per-hop event counts accumulate rather than being replaced by the next
+  // hop's zero, and the whole batch is fenced so it happens exactly once.
+  for (const column of ["duplicateCount", "retriedCount", "oversizedCount"])
+    assert.match(jobs, new RegExp(`${column}: accumulatedCounter\\(`));
+  assert.match(jobs, /completeContinuation\b[\s\S]*\.where\(executionFence\)/);
 });

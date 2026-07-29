@@ -173,7 +173,7 @@ test("the 1,294 discovered and zero processed boundary checkpoints before extrac
     new URL("../lib/google-drive/sync.ts", import.meta.url),
     "utf8",
   );
-  assert.match(sync, /options: \{ discoveryOnly\?: boolean \}/);
+  assert.match(sync, /discoveryOnly\?: boolean;/);
   assert.match(sync, /if \(options\.discoveryOnly\)/);
   assert.match(sync, /DISCOVERY_CHECKPOINT_COMPLETE/);
   assert.match(sync, /filesDeferred: Math\.max\(0, discovered - filesProcessed\)/);
