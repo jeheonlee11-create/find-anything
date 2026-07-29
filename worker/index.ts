@@ -5,6 +5,7 @@ import { logIndexingEvent } from "../lib/observability/indexing-log";
 import { enqueueWithManagedQueue } from "../lib/indexing/queue-client";
 import { continuationMessage } from "../lib/indexing/queue-protocol";
 import { markQueueContinuationDispatched } from "../lib/indexing/jobs";
+import { executeIndexingContinuation } from "./indexing-continuation";
 
 interface Env {
   ASSETS: Fetcher;
@@ -48,6 +49,7 @@ const worker = {
 
     const response = await handler.fetch(request, env, ctx),
       jobId = response.headers.get("x-find-anything-job-id"),
+      jobToken = response.headers.get("x-find-anything-job-token"),
       continuationId = response.headers.get(
         "x-find-anything-continuation-id",
       ),
@@ -94,6 +96,29 @@ const worker = {
           errorCode: "QUEUE_ENQUEUE_DEFERRED_TO_RECONCILER",
           stage: "connecting",
         });
+        if (jobToken) {
+          const continuationHeaders = {
+            "x-find-anything-job-id": jobId,
+            "x-find-anything-job-token": jobToken,
+            "x-find-anything-continuation-id": continuationId,
+          };
+          ctx.waitUntil(
+            executeIndexingContinuation({
+              jobId,
+              continuationId,
+              persistDispatch: () =>
+                fetch(new URL("/api/internal/indexing/dispatch", request.url), {
+                  method: "POST",
+                  headers: continuationHeaders,
+                }),
+              startFreshWorker: () =>
+                fetch(new URL("/api/internal/indexing/continue", request.url), {
+                  method: "POST",
+                  headers: continuationHeaders,
+                }),
+            }).catch(() => undefined),
+          );
+        }
       }
       const headers = new Headers(response.headers);
       headers.delete("x-find-anything-job-id");

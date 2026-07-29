@@ -49,9 +49,11 @@ export async function POST(request: Request) {
     if (
       job.continuationId &&
       job.continuationSequence &&
-      job.attemptEpoch
+      job.attemptEpoch &&
+      job.continuationToken
     ) {
       headers["x-find-anything-job-id"] = job.jobId;
+      headers["x-find-anything-job-token"] = job.continuationToken;
       headers["x-find-anything-continuation-id"] = job.continuationId;
       headers["x-find-anything-continuation-sequence"] =
         String(job.continuationSequence);

@@ -35,9 +35,11 @@ export async function GET(
       if (
         resumed.continuationId &&
         resumed.continuationSequence &&
-        resumed.attemptEpoch
+        resumed.attemptEpoch &&
+        resumed.continuationToken
       ) {
         headers["x-find-anything-job-id"] = resumed.jobId;
+        headers["x-find-anything-job-token"] = resumed.continuationToken;
         headers["x-find-anything-continuation-id"] = resumed.continuationId;
         headers["x-find-anything-continuation-sequence"] =
           String(resumed.continuationSequence);

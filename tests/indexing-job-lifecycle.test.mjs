@@ -91,7 +91,8 @@ test("job persistence, stale recovery, and cross-request continuation stay wired
   assert.match(jobs, /filesUnsupported/);
   assert.match(jobs, /INDEXING_INVENTORY_UNACCOUNTED/);
   assert.match(worker, /enqueueWithManagedQueue/);
-  assert.doesNotMatch(worker, /ctx\.waitUntil/);
+  assert.match(worker, /ctx\.waitUntil/);
+  assert.match(worker, /executeIndexingContinuation/);
   assert.match(jobs, /indexingContinuations/);
   assert.match(jobs, /continuation_persisted/);
   assert.match(dashboard, /Indexing \$\{job\.processedCount\} of \$\{job\.discoveredCount\} files/);
@@ -215,7 +216,7 @@ test("multiple durable processing continuations can reach completion", async () 
   );
 });
 
-test("an acknowledged fresh-worker handoff no longer depends on the browser", async () => {
+test("an acknowledged fresh-worker handoff uses the queue or the free Worker fallback", async () => {
   const [worker, queueWorker] = await Promise.all([
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../queue-worker/src/index.ts", import.meta.url), "utf8"),
@@ -223,7 +224,8 @@ test("an acknowledged fresh-worker handoff no longer depends on the browser", as
   assert.match(worker, /enqueueWithManagedQueue/);
   assert.match(queueWorker, /async queue/);
   assert.match(queueWorker, /async scheduled/);
-  assert.doesNotMatch(worker, /ctx\.waitUntil/);
+  assert.match(worker, /ctx\.waitUntil/);
+  assert.match(worker, /api\/internal\/indexing\/continue/);
   assert.doesNotMatch(worker, /window\.|document\./);
 });
 
