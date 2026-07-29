@@ -4,7 +4,6 @@ import { getDb } from "@/db";
 import {
   connectors,
   extractedUnits,
-  fileVersions,
   indexingFailures,
   memberships,
   oauthRefreshLeases,
@@ -893,22 +892,73 @@ export async function markFileFailed(input: {
       },
     });
 }
+/**
+ * Deletes everything this connector produced. Called only after Google confirms
+ * token revocation, so a failed revocation leaves the data intact and the user
+ * can retry.
+ *
+ * Every statement is workspace- or connector-scoped and bounded, so the delete
+ * costs a fixed number of subrequests no matter how many files were indexed.
+ * `file_versions` and the indexing-job children are removed through correlated
+ * subqueries rather than one statement per row for the same reason.
+ *
+ * Deliberately retained, because they are not connector output: the user's own
+ * workspace and membership, developer API keys, feedback the user submitted, and
+ * privacy-safe aggregate analytics counters. The settings UI says so plainly.
+ */
 export async function deleteConnectorData(
   connectorId: string,
   workspaceId: string,
 ) {
-  const db = await getDb(),
-    files = await db
-      .select({ id: sourceFiles.id })
-      .from(sourceFiles)
-      .where(eq(sourceFiles.connectorId, connectorId));
+  const db = await getDb();
+  // Content and content-derived records for the workspace.
+  await db.run(
+    sql`delete from unit_embeddings where workspace_id = ${workspaceId}`,
+  );
   await db
     .delete(extractedUnits)
     .where(eq(extractedUnits.workspaceId, workspaceId));
-  for (const file of files)
-    await db.delete(fileVersions).where(eq(fileVersions.fileId, file.id));
+  await db.run(
+    sql`delete from file_versions where file_id in (select id from source_files where connector_id = ${connectorId})`,
+  );
+  await db.run(
+    sql`delete from file_relationships where workspace_id = ${workspaceId}`,
+  );
+  await db.run(
+    sql`delete from retrieval_conflicts where workspace_id = ${workspaceId}`,
+  );
+  // Retrieval records: these store the query text, evidence citations, and
+  // result snapshots, so they must go with the content they describe.
+  await db.run(
+    sql`delete from search_receipts where workspace_id = ${workspaceId}`,
+  );
+  await db.run(
+    sql`delete from retrieval_traces where workspace_id = ${workspaceId}`,
+  );
+  // Indexing history, including sanitized file names on failure rows.
+  await db.run(
+    sql`delete from indexing_continuations where job_id in (select id from indexing_jobs where connector_id = ${connectorId})`,
+  );
+  await db.run(
+    sql`delete from indexing_job_attempts where job_id in (select id from indexing_jobs where connector_id = ${connectorId})`,
+  );
+  await db.run(
+    sql`delete from indexing_failures where connector_id = ${connectorId}`,
+  );
+  await db.run(
+    sql`delete from coverage_receipts where connector_id = ${connectorId}`,
+  );
+  await db.run(
+    sql`delete from indexing_jobs where connector_id = ${connectorId}`,
+  );
+  // File inventory, run history, any pending authorization state, and finally
+  // the encrypted credentials themselves.
   await db.delete(sourceFiles).where(eq(sourceFiles.connectorId, connectorId));
   await db.delete(syncRuns).where(eq(syncRuns.connectorId, connectorId));
+  await db.delete(oauthStates).where(eq(oauthStates.workspaceId, workspaceId));
+  await db
+    .delete(oauthRefreshLeases)
+    .where(eq(oauthRefreshLeases.connectorId, connectorId));
   await db.delete(connectors).where(eq(connectors.id, connectorId));
 }
 async function shortHash(value: string) {
