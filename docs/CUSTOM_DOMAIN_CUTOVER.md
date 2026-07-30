@@ -114,5 +114,6 @@ are bound to the OAuth client, not to the hostname that started the flow.
 - DNS and registrar access are manual. This repository cannot purchase a domain,
   change registrar records, attach a domain, or deploy.
 - Keep the generated Sites address working for diagnostics throughout.
-- `air.findanything.dev` is a separate, unrelated deployment. It is not part of
-  this plan and must not be touched.
+- Only the hostnames named in this plan are in scope. Any other subdomain of the
+  registrable domain belongs to a separate, unrelated deployment: do not
+  repoint, release, reattach, or otherwise modify it.

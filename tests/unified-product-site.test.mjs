@@ -517,15 +517,22 @@ test("the public origin is centralized and the OAuth redirect derives from it", 
     const page = await source(path);
     assert.doesNotMatch(page, /app\.findanything\.dev|api\.findanything\.dev/, path);
   }
-  // air.findanything.dev is a separate deployment and must stay untouched.
+  // No configuration or customer-facing page names any subdomain of the
+  // registrable domain: unrelated deployments live there and stay untouched.
   for (const path of [
     "lib/config/urls.ts",
     ".env.example",
     "app/page.tsx",
     "app/settings/page.tsx",
     "app/connect/page.tsx",
+    "app/mcp/page.tsx",
+    "app/privacy/page.tsx",
   ])
-    assert.doesNotMatch(await source(path), /air\.findanything\.dev/, path);
+    assert.doesNotMatch(
+      await source(path),
+      /\/\/[a-z0-9-]+\.findanything\.dev/,
+      path,
+    );
 });
 
 test("settings states plainly what disconnecting deletes and does not invent capabilities", async () => {
