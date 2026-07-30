@@ -123,7 +123,7 @@ export function SettingsPanel() {
           <>
             {workspaces.length > 1 && (
               <label>
-                Workspace
+                Selected workspace
                 <select
                   value={selectedId}
                   onChange={(event) => setSelectedId(event.target.value)}
