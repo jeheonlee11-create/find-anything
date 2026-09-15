@@ -5,13 +5,18 @@ import { logIndexingEvent } from "../lib/observability/indexing-log";
 import { enqueueWithManagedQueue } from "../lib/indexing/queue-client";
 import { continuationMessage } from "../lib/indexing/queue-protocol";
 import { markQueueContinuationDispatched } from "../lib/indexing/jobs";
-import { executeIndexingContinuation } from "./indexing-continuation";
+import {
+  DETACHED_CONTINUATION_TIMEOUT_MS,
+  executeIndexingContinuation,
+  type ContinuationHop,
+} from "./indexing-continuation";
 
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   INDEXING_QUEUE_DISPATCH_URL?: string;
   INDEXING_QUEUE_INGRESS_SECRET?: string;
+  NEXT_PUBLIC_SITE_URL?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -97,29 +102,44 @@ const worker = {
           stage: "connecting",
         });
         if (jobToken) {
-          const continuationHeaders = {
-            "x-find-anything-job-id": jobId,
-            "x-find-anything-job-token": jobToken,
-            "x-find-anything-continuation-id": continuationId,
-          };
+          const headersFor = (hop: ContinuationHop) => ({
+              "x-find-anything-job-id": hop.jobId,
+              "x-find-anything-job-token": hop.jobToken,
+              "x-find-anything-continuation-id": hop.continuationId,
+            }),
+            // A detached continuation must leave the worker over the network
+            // so it lands in a fresh invocation with its own subrequest
+            // budget. The canonical public origin is the one address known
+            // to route back here; the request's own origin is the fallback.
+            detachedBase = env.NEXT_PUBLIC_SITE_URL || request.url;
           ctx.waitUntil(
             executeIndexingContinuation({
-              jobId,
-              continuationId,
-              persistDispatch: () =>
+              hop: { jobId, jobToken, continuationId },
+              persistDispatch: (hop) =>
                 handler.fetch(
                   new Request(
                     new URL("/api/internal/indexing/dispatch", request.url),
-                    { method: "POST", headers: continuationHeaders },
+                    { method: "POST", headers: headersFor(hop) },
                   ),
                   env,
                   ctx,
                 ),
-              startFreshWorker: () =>
+              startDetachedWorker: (hop) =>
+                fetch(
+                  new URL("/api/internal/indexing/continue", detachedBase),
+                  {
+                    method: "POST",
+                    headers: headersFor(hop),
+                    signal: AbortSignal.timeout(
+                      DETACHED_CONTINUATION_TIMEOUT_MS,
+                    ),
+                  },
+                ),
+              startInProcessWorker: (hop) =>
                 handler.fetch(
                   new Request(
                     new URL("/api/internal/indexing/continue", request.url),
-                    { method: "POST", headers: continuationHeaders },
+                    { method: "POST", headers: headersFor(hop) },
                   ),
                   env,
                   ctx,

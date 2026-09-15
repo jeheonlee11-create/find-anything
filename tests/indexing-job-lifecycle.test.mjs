@@ -246,3 +246,139 @@ test("the independent scheduled trigger recovers unacknowledged dispatches", asy
   assert.match(source, /claimDue/);
   assert.match(config, /"\* \* \* \* \*"/);
 });
+
+// --- Queue-less continuation chaining (the production path) ---
+
+const hopResponse = (ok, headers = {}) => ({
+  ok,
+  headers: { get: (name) => headers[name] ?? null },
+  arrayBuffer: async () => new ArrayBuffer(0),
+});
+const firstHop = {
+  jobId: "job_1",
+  jobToken: "token_1",
+  continuationId: "continuation_job_1_1",
+};
+
+test("a detached continuation hands the chain to a fresh invocation", async () => {
+  const { executeIndexingContinuation } = await import(
+    "../worker/indexing-continuation.ts"
+  );
+  const calls = { dispatch: 0, detached: 0, inProcess: 0 };
+  const result = await executeIndexingContinuation({
+    hop: firstHop,
+    persistDispatch: async () => (calls.dispatch += 1, hopResponse(true)),
+    startDetachedWorker: async () => (calls.detached += 1, hopResponse(true)),
+    startInProcessWorker: async () => {
+      calls.inProcess += 1;
+      return hopResponse(true);
+    },
+  });
+  assert.deepEqual(result, { dispatched: true, detached: true, hops: 0 });
+  assert.deepEqual(calls, { dispatch: 1, detached: 1, inProcess: 0 });
+});
+
+test("a refused detached request degrades to in-process chaining until headers stop", async () => {
+  const { executeIndexingContinuation } = await import(
+    "../worker/indexing-continuation.ts"
+  );
+  const calls = { dispatch: 0, detached: 0, inProcess: 0 };
+  const result = await executeIndexingContinuation({
+    hop: firstHop,
+    persistDispatch: async () => (calls.dispatch += 1, hopResponse(true)),
+    startDetachedWorker: async () => {
+      calls.detached += 1;
+      throw new Error("SELF_FETCH_BLOCKED");
+    },
+    startInProcessWorker: async (hop) => {
+      calls.inProcess += 1;
+      // First hop returns a chained continuation; second hop is terminal.
+      return calls.inProcess === 1
+        ? hopResponse(true, {
+            "x-find-anything-job-id": hop.jobId,
+            "x-find-anything-continuation-id": "continuation_job_1_2",
+            "x-find-anything-job-token": hop.jobToken,
+          })
+        : hopResponse(true);
+    },
+  });
+  assert.deepEqual(result, { dispatched: true, detached: false, hops: 2 });
+  assert.deepEqual(calls, { dispatch: 2, detached: 2, inProcess: 2 });
+});
+
+test("the chain respects the wall clock and the hop cap", async () => {
+  const {
+    executeIndexingContinuation,
+    CONTINUATION_CHAIN_MAX_HOPS,
+    CONTINUATION_CHAIN_WALL_CLOCK_MS,
+  } = await import("../worker/indexing-continuation.ts");
+  // Hop cap: endless chained headers still stop at the cap.
+  const unbounded = await executeIndexingContinuation({
+    hop: firstHop,
+    persistDispatch: async () => hopResponse(true),
+    startInProcessWorker: async (hop) =>
+      hopResponse(true, {
+        "x-find-anything-job-id": hop.jobId,
+        "x-find-anything-continuation-id": `${hop.continuationId}x`,
+      }),
+  });
+  assert.equal(unbounded.hops, CONTINUATION_CHAIN_MAX_HOPS);
+  // Wall clock: a slow first hop leaves no time for a second.
+  let clock = 0;
+  const timed = await executeIndexingContinuation({
+    hop: firstHop,
+    now: () => clock,
+    persistDispatch: async () => hopResponse(true),
+    startInProcessWorker: async (hop) => {
+      clock += CONTINUATION_CHAIN_WALL_CLOCK_MS;
+      return hopResponse(true, {
+        "x-find-anything-job-id": hop.jobId,
+        "x-find-anything-continuation-id": `${hop.continuationId}x`,
+      });
+    },
+  });
+  assert.equal(timed.hops, 1);
+});
+
+test("a failed dispatch stops the chain before any hop runs", async () => {
+  const { executeIndexingContinuation } = await import(
+    "../worker/indexing-continuation.ts"
+  );
+  let hopRan = false;
+  await assert.rejects(
+    executeIndexingContinuation({
+      hop: firstHop,
+      persistDispatch: async () => hopResponse(false),
+      startInProcessWorker: async () => {
+        hopRan = true;
+        return hopResponse(true);
+      },
+    }),
+    /CONTINUATION_SCHEDULING_FAILED/,
+  );
+  assert.equal(hopRan, false);
+});
+
+test("detached continuations are schedulable end to end", async () => {
+  const [continueRoute, worker, dashboard, syncRoute] = await Promise.all([
+    readFile(new URL("../app/api/internal/indexing/continue/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/workspace-dashboard.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/connectors/google-drive/sync/route.ts", import.meta.url), "utf8"),
+  ]);
+  // The continue response must carry the full header set the wrapper needs
+  // to schedule the following hop from a fresh invocation.
+  assert.match(continueRoute, /x-find-anything-continuation-sequence/);
+  assert.match(continueRoute, /x-find-anything-attempt-epoch/);
+  // The wrapper prefers a real network request (fresh subrequest budget) and
+  // bounds it, keeping the in-process hop as the degraded path.
+  assert.match(worker, /startDetachedWorker/);
+  assert.match(worker, /AbortSignal\.timeout/);
+  assert.match(worker, /NEXT_PUBLIC_SITE_URL \|\| request\.url/);
+  assert.match(worker, /startInProcessWorker/);
+  // The UI no longer promises unattended completion the platform has not
+  // demonstrated: it must not claim leaving the page is always safe.
+  assert.doesNotMatch(dashboard, /You may leave this page/);
+  assert.doesNotMatch(syncRoute, /You may safely close this page/);
+  assert.match(dashboard, /progress is saved if you leave/i);
+});

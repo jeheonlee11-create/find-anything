@@ -28,6 +28,17 @@ export async function POST(request: Request) {
             "x-find-anything-job-id": jobId,
             "x-find-anything-job-token": token,
             "x-find-anything-continuation-id": result.continuationId,
+            // Sequence and epoch make this response schedulable by the
+            // worker wrapper, so a detached continuation request continues
+            // the chain from its own fresh invocation.
+            ...(result.continuationSequence && result.attemptEpoch
+              ? {
+                  "x-find-anything-continuation-sequence": String(
+                    result.continuationSequence,
+                  ),
+                  "x-find-anything-attempt-epoch": String(result.attemptEpoch),
+                }
+              : {}),
           }
         : { "cache-control": "no-store" },
     },

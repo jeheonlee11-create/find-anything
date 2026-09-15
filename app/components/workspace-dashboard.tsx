@@ -176,7 +176,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
         ? "Indexing is already running."
         : body.resumed
           ? "Indexing resumed."
-          : "Indexing started. You may leave this page.",
+          : "Indexing started. Keep this page open for fastest indexing.",
     );
     await load(true);
     setBusy(false);
@@ -340,7 +340,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
             <b>{indexingProgressLabel(job)}</b>
             <p>
               {remaining === null
-                ? "We’re checking your connected Drive files. You may leave this page while indexing continues."
+                ? "We’re checking your connected Drive files. Keeping this page open indexes fastest; progress is saved if you leave."
                 : `${remaining} remaining`}
             </p>
             {acknowledgement && <p className="indexing-ack">{acknowledgement}</p>}

@@ -825,6 +825,8 @@ export async function runIndexingJob(
       status: "failed",
       continuationNeeded: false,
       continuationId: null,
+      continuationSequence: null,
+      attemptEpoch: null,
     };
   }
   // Fence for every write this hop commits: the continuation must still be the
@@ -1234,6 +1236,8 @@ export async function runIndexingJob(
       status: reauthorization ? "reauthorization_required" : "failed",
       continuationNeeded: false,
       continuationId: null,
+      continuationSequence: null,
+      attemptEpoch: null,
     };
   }
 }

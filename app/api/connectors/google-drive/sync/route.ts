@@ -67,7 +67,7 @@ export async function POST(request: Request) {
         alreadyActive: job.alreadyActive,
         message: job.alreadyActive
           ? "Indexing is already in progress."
-          : "Indexing was queued. You may safely close this page.",
+          : "Indexing was queued. Progress is saved continuously; keeping the workspace dashboard open indexes fastest.",
       },
       { status: 202, headers },
     );
