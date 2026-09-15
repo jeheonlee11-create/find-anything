@@ -73,11 +73,13 @@ test("the homepage renders unauthenticated and claims nothing it cannot measure"
   assert.doesNotMatch(html, /Sign in|Sign up|Request Beta Access/i);
 
   // Illustrative figures are visibly labelled as synthetic, in visible text.
+  // The minimal homepage keeps exactly one synthetic illustration (the hero
+  // conflict panel), and it must carry the label.
   const illustrationLabels =
     html.match(
       /Illustration · synthetic example, not measured product output/g,
     ) ?? [];
-  assert.equal(illustrationLabels.length, 2);
+  assert.equal(illustrationLabels.length, 1);
   assert.match(html, /\$120,000\/year/);
   assert.match(html, /Recorded demonstration · Synthetic data/);
 

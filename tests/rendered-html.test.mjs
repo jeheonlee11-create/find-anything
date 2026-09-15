@@ -30,7 +30,7 @@ async function search(query, extra = {}) {
 
 test("renders public product, growth, help, and trust routes with truthful disclosures", async () => {
   for (const [path, pattern] of [
-    ["/", /Your AI agents don.t know what they missed/i],
+    ["/", /Retrieval evidence for AI agents/i],
     ["/docs", /Retrieval API contract/i],
     ["/trust", /Trust starts with an honest retrieval boundary/i],
     ["/pricing", /Pre-beta/i],
