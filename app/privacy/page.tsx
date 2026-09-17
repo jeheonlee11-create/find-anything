@@ -70,6 +70,14 @@ export default function Privacy() {
             file name so you can tell which file could not be read.
           </li>
           <li>
+            No external AI provider receives your file content. Text extraction
+            runs on deterministic parsers inside the hosting boundary, and no
+            document content, file name, or query is sent to any third-party
+            model API. An optional AI-enrichment stage exists in the code but is
+            disabled in production; if it is ever enabled, this policy will be
+            updated first and the change will be announced before it applies.
+          </li>
+          <li>
             All of it is scoped to one workspace. Workspace membership is checked
             server-side on every workspace, connector, search, trace, and receipt
             request, so one workspace can never read another&rsquo;s files.
