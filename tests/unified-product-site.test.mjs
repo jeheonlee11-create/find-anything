@@ -81,7 +81,7 @@ test("the homepage renders unauthenticated and claims nothing it cannot measure"
     ) ?? [];
   assert.equal(illustrationLabels.length, 1);
   assert.match(html, /\$120,000\/year/);
-  assert.match(html, /Recorded demonstration · Synthetic data/);
+  assert.match(html, /Product film · 45 seconds · synthetic example data/);
 
   // No claim of Google approval, and no deployment address leaked into copy.
   assert.doesNotMatch(

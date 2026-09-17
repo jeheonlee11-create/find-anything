@@ -29,9 +29,9 @@ export async function generateMetadata(): Promise<Metadata> {
       title,
       description,
       type: "website",
-      images: [{ url: `${origin}/find-anything-demo-poster.png`, width: 1920, height: 1080, alt: "Find Anything accounts for known sources, retrieval confidence, citations, and coverage" }],
+      images: [{ url: `${origin}/find-anything-promo-poster.png`, width: 1920, height: 1080, alt: "Find Anything accounts for known sources, retrieval confidence, citations, and coverage" }],
     },
-    twitter: { card: "summary_large_image", title, description, images: [`${origin}/find-anything-demo-poster.png`] },
+    twitter: { card: "summary_large_image", title, description, images: [`${origin}/find-anything-promo-poster.png`] },
   };
 }
 

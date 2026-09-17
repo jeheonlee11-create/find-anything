@@ -48,7 +48,7 @@ export default function AccessRequired() {
       </section>
 
       <footer className="marketing-footer marketing-shell">
-        <div><Link className="marketing-brand" href="/"><span>F</span>Find Anything</Link><p>Trusted knowledge for AI agents. Private beta.</p></div>
+        <div><Link className="marketing-brand" href="/"><span>F</span>Find Anything</Link><p>Trusted knowledge for AI agents. Public beta.</p></div>
         <nav aria-label="Legal and trust"><Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link><Link href="/trust">Security</Link><a href="mailto:hello@findanything.dev">Contact</a></nav>
       </footer>
     </main>

@@ -46,7 +46,7 @@ export function WorkspaceOnboarding({ onboardingComplete }: { onboardingComplete
 
   return <>
     {!ready && <section className="content-section onboarding-card">
-      <span className="page-badge">Private beta · 2 minute setup</span>
+      <span className="page-badge">Public beta · 2 minute setup</span>
       <h2>Find exact evidence in your Google Drive.</h2>
       <p>Find Anything only reaches the files you add through Google’s picker — the rest of your Drive is invisible to it. It extracts searchable structure from those files and never edits or deletes anything in your Drive.</p>
       <div className="trust-grid">

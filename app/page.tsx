@@ -28,7 +28,7 @@ export default function Home() {
         <p>Find Anything searches the Google Drive files you share with it, keeps conflicting sources visible, and shows exactly what was found, missed, or off-limits.</p>
         <div className="marketing-actions">
           <a className="marketing-primary" href="/connect" onClick={() => marketingEvent("beta_access_clicked")}>Connect Google Drive <span>→</span></a>
-          <a className="marketing-secondary" href="#demo">Watch the demo</a>
+          <a className="marketing-secondary" href="#demo">Watch the film</a>
         </div>
         <p className="marketing-returning">Already set up? <a href="/app">Continue with Google</a></p>
         <p className="marketing-boundary">Find Anything sees only the Drive files you choose in Google’s picker — the rest of your Drive stays invisible to it. Google has not verified or approved this application; brand verification is pending.</p>
@@ -46,17 +46,16 @@ export default function Home() {
     </section>
 
     <section className="marketing-demo marketing-shell" id="demo" aria-labelledby="demo-title">
-      <p className="marketing-kicker">Recorded demonstration · Synthetic data, not a customer workspace</p>
-      <h2 id="demo-title">See it in 56 seconds.</h2>
+      <p className="marketing-kicker">Product film · 45 seconds · synthetic example data</p>
+      <h2 id="demo-title">Evidence, not vibes.</h2>
       <div className="marketing-video-frame">
-        <video controls preload="metadata" poster="/find-anything-demo-poster.png" playsInline onPlay={() => { if (!viewed.current) { viewed.current = true; marketingEvent("demo_viewed"); } }}>
-          <source src="/find-anything-demo.mp4" type="video/mp4" />
-          <track default kind="captions" src="/find-anything-demo-captions.vtt" srcLang="en" label="English" />
-          Your browser does not support the demo video.
+        <video controls preload="metadata" poster="/find-anything-promo-poster.png" playsInline onPlay={() => { if (!viewed.current) { viewed.current = true; marketingEvent("demo_viewed"); } }}>
+          <source src="/find-anything-promo.mp4" type="video/mp4" />
+          Your browser does not support the video.
         </video>
       </div>
-      <p className="marketing-boundary">A screen recording of the product on a synthetic Google Drive folder built for the demonstration. Every file, price, and figure in it was invented for the recording.</p>
-      <details className="marketing-transcript"><summary>Read the demo description</summary><p>An agent finds two enterprise prices: an approved final at $120,000 per year plus $25,000 implementation, and an older draft at $95,000 plus $20,000. Find Anything keeps both visible, ranks the explicitly authoritative final first, excludes an unavailable Finance record without exposing its contents, and records citations, confidence, coverage, trace, replay, receipt, and diff.</p></details>
+      <p className="marketing-boundary">An animated product film. Every file and figure in it is an invented example — not customer data. There is no narration.</p>
+      <details className="marketing-transcript"><summary>What the film shows</summary><p>An agent finds two conflicting enterprise prices: an approved final at $120,000 per year and an older draft at $95,000. Find Anything keeps both visible, ranks the authoritative final first with the reasons stated, excludes a restricted Finance record without reading it, and accounts for 7 of 8 known sources in a deterministic receipt.</p></details>
     </section>
 
     <footer className="marketing-footer marketing-shell">
