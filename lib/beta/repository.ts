@@ -34,7 +34,11 @@ export async function betaAccess(actor: AuthenticatedActor) {
     return { allowed: true, role: "admin" as const, onboardingComplete: true };
   if (process.env.BETA_ACCESS_MODE === "open-local-test")
     return { allowed: true, role: "admin" as const, onboardingComplete: true };
-  if (process.env.BETA_ACCESS_MODE !== "invited")
+  // "open" admits every authenticated user while keeping the rest of the
+  // machinery intact: admins still come from BETA_ADMIN_EMAILS, existing user
+  // rows keep their role, and a suspended row still blocks access.
+  const openMode = process.env.BETA_ACCESS_MODE === "open";
+  if (process.env.BETA_ACCESS_MODE !== "invited" && !openMode)
     return { allowed: false, role: null, onboardingComplete: false };
   const db = await getDb(),
     hash = await emailHash(actor.email),
@@ -66,6 +70,7 @@ export async function betaAccess(actor: AuthenticatedActor) {
     .get();
   if (
     !isAdmin &&
+    !openMode &&
     (!invitation || Date.parse(invitation.expiresAt) <= Date.now())
   )
     return { allowed: false, role: null, onboardingComplete: false };

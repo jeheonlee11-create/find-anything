@@ -89,7 +89,10 @@ test("the homepage renders unauthenticated and claims nothing it cannot measure"
     /(?:verified|approved|endorsed) by Google|Google[ -](?:verified|approved)/i,
   );
   assert.doesNotMatch(html, /chatgpt\.site/i);
-  assert.match(html, /awaiting Google’s restricted-scope verification/);
+  // The per-file pivot: the homepage discloses picker-scoped access and the
+  // pending brand verification instead of a restricted-scope claim.
+  assert.match(html, /only the Drive files you choose/i);
+  assert.match(html, /brand verification is pending/i);
 });
 
 test("no user-visible surface advertises a long generated deployment address", async () => {
@@ -509,7 +512,7 @@ test("the public origin is centralized and the OAuth redirect derives from it", 
   const oauth = await source("lib/google-drive/oauth.ts");
   assert.match(
     oauth,
-    /DRIVE_SCOPE="https:\/\/www\.googleapis\.com\/auth\/drive\.readonly"/,
+    /DRIVE_SCOPE="https:\/\/www\.googleapis\.com\/auth\/drive\.file"/,
   );
   assert.equal((oauth.match(/googleapis\.com\/auth\//g) ?? []).length, 1);
   assert.match(oauth, /scope:DRIVE_SCOPE/);
@@ -580,8 +583,60 @@ test("settings states plainly what disconnecting deletes and does not invent cap
   assert.match(panel, /Retrieval traces and search receipts/);
   assert.match(panel, /Developer API keys/);
   assert.match(panel, /not yet a self-service/);
-  assert.match(privacy, /drive\.readonly/);
+  assert.match(privacy, /drive\.file/);
   assert.match(privacy, /AES-GCM/);
-  assert.match(privacy, /never returned to the browser/);
-  assert.match(privacy, /verification is pending, not granted/);
+  assert.match(privacy, /Refresh tokens never leave the server/);
+  assert.match(privacy, /brand\s+verification is pending/);
+});
+
+// --- Per-file scope pivot: picker, token boundary, and the open access mode ---
+
+test("the picker token endpoint is guarded, fail-closed, and never ships a refresh token", async () => {
+  // Unauthenticated callers are rejected before any Drive state is touched.
+  const anonymous = await request(
+    "/api/workspaces/ws_x/google-drive/picker-token",
+    { method: "POST" },
+  );
+  assert.ok([401, 404].includes(anonymous.status), `status ${anonymous.status}`);
+
+  const route = await source(
+    "app/api/workspaces/[workspaceId]/google-drive/picker-token/route.ts",
+  );
+  assert.match(route, /requireApiActor/);
+  assert.match(route, /actorWorkspace\(actor\.actorId, workspaceId\)/);
+  // Missing picker configuration is a clean 503, not a broken picker.
+  assert.match(route, /PICKER_NOT_CONFIGURED/);
+  // Only the short-lived access token crosses to the browser.
+  assert.match(route, /usableAccessToken/);
+  assert.doesNotMatch(route, /refreshToken|refresh_token/);
+  assert.match(route, /"cache-control": "no-store"/);
+});
+
+test("the content security policy admits exactly the picker's origins", async () => {
+  const config = await source("next.config.ts");
+  assert.match(config, /script-src 'self' 'unsafe-inline' https:\/\/apis\.google\.com/);
+  assert.match(config, /frame-src 'self' https:\/\/docs\.google\.com/);
+  // connect-src stays first-party: the picker iframe talks to Google itself.
+  assert.match(config, /connect-src 'self'/);
+});
+
+test("the dashboard offers multi-select picking and syncs after a pick", async () => {
+  const dashboard = await source("app/components/workspace-dashboard.tsx");
+  assert.match(dashboard, /MULTISELECT_ENABLED/);
+  assert.match(dashboard, /apis\.google\.com\/js\/api\.js/);
+  assert.match(dashboard, /Add files from Drive/);
+  // A successful pick triggers indexing; picked IDs never travel through our API.
+  assert.match(dashboard, /Action\.PICKED[\s\S]{0,400}void sync\(\)/);
+});
+
+test("the open access mode admits everyone without weakening moderation or admins", async () => {
+  const gate = await source("lib/beta/repository.ts");
+  assert.match(gate, /BETA_ACCESS_MODE === "open"/);
+  // Suspended rows still deny: open mode reuses the existing-user branch.
+  assert.match(gate, /existing\.status === "active"/);
+  // Admins still come from BETA_ADMIN_EMAILS, not from open mode.
+  assert.match(gate, /BETA_ADMIN_EMAILS/);
+  // Any other value still fails closed (the suite runs under such a value and
+  // the unapproved-user tests above prove the denial behavior end to end).
+  assert.match(gate, /!== "invited" && !openMode/);
 });

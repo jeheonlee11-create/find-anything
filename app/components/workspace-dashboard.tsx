@@ -4,6 +4,32 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { WorkspaceSearch } from "@/app/components/workspace-search";
 import { WorkspaceCoverageMap } from "@/app/components/workspace-coverage-map";
+declare global {
+  // Google's picker library attaches itself to window; only the handful of
+  // members used here are typed.
+  interface Window {
+    gapi?: { load: (library: "picker", callback: () => void) => void };
+    // Google's picker library is untyped here; uses are quarantined in openFilePicker.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    google?: { picker: Record<string, any> } & Record<string, unknown>;
+  }
+}
+let pickerLibrary: Promise<void> | null = null;
+function loadPickerLibrary() {
+  if (window.google?.picker) return Promise.resolve();
+  pickerLibrary ??= new Promise<void>((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://apis.google.com/js/api.js";
+    script.async = true;
+    script.onload = () => window.gapi?.load("picker", () => resolve());
+    script.onerror = () => {
+      pickerLibrary = null;
+      reject(new Error("PICKER_LIBRARY_UNAVAILABLE"));
+    };
+    document.head.appendChild(script);
+  });
+  return pickerLibrary;
+}
 type Dashboard = {
   demoMode: boolean;
   workspace: { id: string; name: string; role: string };
@@ -85,6 +111,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
     [data, setData] = useState<Dashboard | null>(null),
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
+    [pickerBusy, setPickerBusy] = useState(false),
     advancing = useRef(false),
     [acknowledgement, setAcknowledgement] = useState(""),
     [error, setError] = useState("");
@@ -181,6 +208,49 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
     await load(true);
     setBusy(false);
   }
+  async function openFilePicker() {
+    setPickerBusy(true);
+    setError("");
+    try {
+      const response = await fetch(
+          `/api/workspaces/${encodeURIComponent(workspaceId)}/google-drive/picker-token`,
+          { method: "POST" },
+        ),
+        body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(body.error?.message ?? "The file picker could not be opened.");
+        return;
+      }
+      await loadPickerLibrary();
+      const pickerApi = window.google?.picker;
+      if (!pickerApi) throw new Error("PICKER_LIBRARY_UNAVAILABLE");
+      const picker = new pickerApi.PickerBuilder()
+        .addView(
+          new pickerApi.DocsView(pickerApi.ViewId.DOCS)
+            .setMode(pickerApi.DocsViewMode.LIST)
+            .setIncludeFolders(true),
+        )
+        .enableFeature(pickerApi.Feature.MULTISELECT_ENABLED)
+        .enableFeature(pickerApi.Feature.NAV_HIDDEN)
+        .setOAuthToken(body.accessToken)
+        .setDeveloperKey(body.pickerApiKey)
+        .setAppId(body.pickerAppId)
+        .setTitle("Choose files for Find Anything to index")
+        .setCallback((data: { action: string; docs?: unknown[] }) => {
+          if (data.action !== pickerApi.Action.PICKED) return;
+          // Google granted per-file access when the user picked; the next
+          // sync discovers the enlarged corpus through files.list, so the
+          // picked IDs never need to travel through our own API.
+          void sync();
+        })
+        .build();
+      picker.setVisible(true);
+    } catch {
+      setError("Google's file picker could not be loaded. Check your connection and retry.");
+    } finally {
+      setPickerBusy(false);
+    }
+  }
   async function disconnect() {
     if (
       !window.confirm(
@@ -276,8 +346,8 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
               </p>
               <p>
                 {data.connector.scopeVerified
-                  ? "Read-only Drive access verified"
-                  : "Required read-only Drive permission is missing; reconnect Drive."}
+                  ? "Per-file Drive access verified — Find Anything sees only files you add"
+                  : "The Drive permission needs an update; reconnect Google Drive."}
               </p>
               {data.connector.lastErrorCode && (
                 <p>
@@ -309,6 +379,13 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
                           : "Start indexing"}
                 </button>
               )}
+              <button
+                className="button"
+                disabled={busy || pickerBusy || activeJob}
+                onClick={openFilePicker}
+              >
+                {pickerBusy ? "Opening picker…" : "Add files from Drive"}
+              </button>
               <button disabled={busy} onClick={disconnect}>
                 Disconnect Google Drive
               </button>
@@ -319,8 +396,8 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
             <div>
               <b>No Drive connected</b>
               <p>
-                Authorize read-only access to files your Google account can
-                access.
+                Connect Google Drive, then choose exactly which files Find
+                Anything may index. Nothing else in your Drive is visible to it.
               </p>
             </div>
             <button className="button" disabled={busy} onClick={connect}>

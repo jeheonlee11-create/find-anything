@@ -21,27 +21,34 @@ export default function Privacy() {
         <ul className="status-list">
           <li>
             One scope is requested:{" "}
-            <code>https://www.googleapis.com/auth/drive.readonly</code>. It is
-            read-only. Find Anything cannot create, edit, move, or delete
-            anything in your Drive, and it never attempts to.
+            <code>https://www.googleapis.com/auth/drive.file</code>. It is
+            per-file: Find Anything can only reach the specific files you choose
+            in Google&rsquo;s file picker. The rest of your Drive is invisible to
+            it — not just unread, but unlistable.
           </li>
           <li>
-            Read access is required because the product&rsquo;s purpose is to
-            inventory the files your connected Google account can reach, extract
-            their text and structure, and then prove which sources an answer came
-            from and which known sources were unavailable.
+            Plain honesty about the consent screen: Google describes this
+            permission as the ability to see, edit, create, and delete{" "}
+            <em>only the specific files you use with the app</em>. Find Anything
+            only ever reads. It does not edit, create, move, or delete anything
+            in your Drive, and no code path attempts to.
           </li>
           <li>
-            The connection sees only what that Google account can already see.
-            Removing a file&rsquo;s permission in Drive removes it from Find
-            Anything at the next inventory pass.
+            Per-file access is used to extract the text and structure of the
+            files you picked, so answers can prove which sources they came from
+            and which of your shared sources were unavailable.
           </li>
           <li>
-            Google has not verified or approved this application.{" "}
-            <code>drive.readonly</code> is a restricted scope, and restricted-scope
-            verification is pending, not granted. During the beta the founder adds
-            each approved tester&rsquo;s Google account individually so consent can
-            be granted while the OAuth client is still in testing.
+            Files you add to Drive later are not visible to Find Anything until
+            you add them through the picker. Changes to already-shared files are
+            picked up at the next indexing pass, and revoking a file&rsquo;s
+            access removes it from the index at the next pass.
+          </li>
+          <li>
+            Google has not verified or approved this application. Its brand
+            verification is pending. During the beta the founder also adds each
+            approved tester&rsquo;s Google account individually so consent can be
+            granted while the OAuth client is still in testing.
           </li>
         </ul>
       </section>
@@ -93,9 +100,16 @@ export default function Privacy() {
             server secret.
           </li>
           <li>
-            Tokens are never returned to the browser, never placed in a URL, and
-            never written to ordinary logs. Neither are Google&rsquo;s raw error
-            responses; only stable internal error codes are logged.
+            Refresh tokens never leave the server, are never placed in a URL,
+            and are never written to ordinary logs. Neither are Google&rsquo;s
+            raw error responses; only stable internal error codes are logged.
+          </li>
+          <li>
+            One deliberate exception, because Google&rsquo;s picker requires it:
+            when you open the file picker, your browser receives a short-lived
+            access token (it expires within about an hour and grants only the
+            same per-file access described above) so Google&rsquo;s own dialog
+            can act as you. The long-lived refresh token is not part of this.
           </li>
           <li>
             The authorization handshake uses PKCE, and the OAuth state is stored

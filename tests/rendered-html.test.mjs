@@ -184,7 +184,7 @@ test("Google Drive implementation includes state, PKCE, encrypted tokens, comple
       ),
     ]);
   assert.match(oauth, /code_challenge_method:"S256"/);
-  assert.match(oauth, /drive\.readonly/);
+  assert.match(oauth, /drive\.file/);
   assert.match(cryptoSource, /AES-GCM/);
   assert.match(client, /while\s*\(pageToken\)/);
   assert.match(client, /permissions\(id,type,role/);

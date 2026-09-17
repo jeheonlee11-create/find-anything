@@ -1,6 +1,10 @@
 import {pkceChallenge,randomToken} from "./crypto";
 import {requireGoogleDriveEnvironment} from "@/lib/config/server-env";
-export const DRIVE_SCOPE="https://www.googleapis.com/auth/drive.readonly";
+// Per-file scope: Find Anything can only reach files the user explicitly
+// shares with it through Google's picker (plus files it creates, which it
+// never does). Non-sensitive per Google's Drive scope tiers, so no restricted
+// -scope verification or security assessment is required to go public.
+export const DRIVE_SCOPE="https://www.googleapis.com/auth/drive.file";
 export interface OAuthConfiguration{clientId:string;clientSecret:string;redirectUri:string}
 export function googleOAuthConfig():OAuthConfiguration{const {clientId,clientSecret,redirectUri}=requireGoogleDriveEnvironment();return{clientId,clientSecret,redirectUri}}
 export async function createAuthorizationRequest(){const config=googleOAuthConfig(),state=randomToken(),verifier=randomToken(48),challenge=await pkceChallenge(verifier);const url=new URL("https://accounts.google.com/o/oauth2/v2/auth");url.search=new URLSearchParams({client_id:config.clientId,redirect_uri:config.redirectUri,response_type:"code",scope:DRIVE_SCOPE,access_type:"offline",prompt:"consent",include_granted_scopes:"true",state,code_challenge:challenge,code_challenge_method:"S256"}).toString();return{url:url.toString(),state,verifier}}

@@ -25,13 +25,13 @@ export default function Home() {
       <div className="marketing-hero-copy">
         <div className="marketing-eyebrow">Invite-only beta</div>
         <h1>Retrieval evidence for AI agents.</h1>
-        <p>Find Anything searches your Google Drive, keeps conflicting sources visible, and shows exactly what was found, missed, or off-limits.</p>
+        <p>Find Anything searches the Google Drive files you share with it, keeps conflicting sources visible, and shows exactly what was found, missed, or off-limits.</p>
         <div className="marketing-actions">
           <a className="marketing-primary" href="/connect" onClick={() => marketingEvent("beta_access_clicked")}>Connect Google Drive <span>→</span></a>
           <a className="marketing-secondary" href="#demo">Watch the demo</a>
         </div>
         <p className="marketing-returning">Already set up? <a href="/app">Continue with Google</a></p>
-        <p className="marketing-boundary">Drive access is read-only, and the application is still awaiting Google’s restricted-scope verification — Google has not verified or approved it.</p>
+        <p className="marketing-boundary">Find Anything sees only the Drive files you choose in Google’s picker — the rest of your Drive stays invisible to it. Google has not verified or approved this application; brand verification is pending.</p>
       </div>
       <div className="marketing-illustration" role="group" aria-labelledby="illustration-label">
         <p className="marketing-kicker" id="illustration-label">Illustration · synthetic example, not measured product output</p>

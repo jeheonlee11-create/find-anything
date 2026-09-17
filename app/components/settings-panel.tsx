@@ -198,7 +198,7 @@ export function SettingsPanel() {
               </p>
               <p>
                 {connector.scopeVerified
-                  ? "Read-only Drive access verified"
+                  ? "Per-file Drive access verified"
                   : "The required read-only Drive permission is missing; reconnect Drive."}
               </p>
             </div>

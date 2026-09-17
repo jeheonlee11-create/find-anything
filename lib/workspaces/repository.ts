@@ -274,5 +274,5 @@ export async function workspaceDashboard(actorId: string, workspaceId: string) {
       ),
     )
     .get()) ?? { total: 0, nameSearchable: 0, fullTextReady: 0 };
-  return { workspace, demoMode, connector: connector?{...connector,scopeVerified:demoMode||new Set(connector.grantedScopes.split(/\s+/)).has("https://www.googleapis.com/auth/drive.readonly" )}:null, files, latestSync, indexingJob, searchIndex };
+  return { workspace, demoMode, connector: connector?{...connector,scopeVerified:demoMode||["https://www.googleapis.com/auth/drive.file","https://www.googleapis.com/auth/drive.readonly"].some(scope=>new Set(connector.grantedScopes.split(/\s+/)).has(scope))}:null, files, latestSync, indexingJob, searchIndex };
 }
