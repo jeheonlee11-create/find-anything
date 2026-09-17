@@ -538,7 +538,7 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
             ))}
           </div>
         ) : (
-          <div className="empty-state"><b>{data.connector ? "No searchable files yet" : "Connect Drive to get started"}</b><p>{data.connector ? "Start indexing, then this list will fill as files become searchable." : "Connect with read-only access. Find Anything never edits or deletes your Drive files."}</p></div>
+          <div className="empty-state"><b>{data.connector ? "No searchable files yet" : "Connect Drive to get started"}</b><p>{data.connector ? "Start indexing, then this list will fill as files become searchable." : "Connect Drive, then add the files to index. Find Anything only reads what you add and never edits or deletes your Drive files."}</p></div>
         )}
       </section>
       <WorkspaceSearch workspaceId={workspaceId} />

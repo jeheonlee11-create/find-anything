@@ -145,3 +145,79 @@ button:disabled{cursor:not-allowed;opacity:.56}
 .ranking-factor-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0}.ranking-factor-list span{display:grid;grid-template-columns:36px 1fr;gap:4px;border:1px solid var(--line);padding:8px}.ranking-factor-list b{grid-row:1/3}.ranking-factor-list small{opacity:.75}.citation-preview pre{white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:620px){.ranking-factor-list{grid-template-columns:1fr}}
 .indexing-progress{margin:0 0 20px;padding:16px 18px;border:1px solid var(--line);border-radius:8px;background:#fff}.indexing-progress p{margin:6px 0 12px;color:#686c63;font-size:13px}.indexing-progress progress{display:block;width:100%;height:10px;accent-color:#78a51e}.indexing-progress.is-delayed{background:#fff8df;border-color:#c69d2f}.indexing-progress.is-failed{background:#fff0e9;border-color:#ba6a47}.indexing-ack{font-weight:650}.indexing-details{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}.indexing-details summary{cursor:pointer;font-size:12px;font-weight:700}.indexing-details dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;margin:12px 0 0;background:var(--line)}.indexing-details dl div{display:flex;justify-content:space-between;gap:12px;padding:9px 10px;background:#fff}.indexing-details dt{color:#686c63;font-size:11px}.indexing-details dd{margin:0;font:10px var(--font-geist-mono);text-align:right;overflow-wrap:anywhere}@media(max-width:620px){.indexing-details dl{grid-template-columns:1fr}}@media(prefers-color-scheme:dark){.content-page .indexing-progress{background:#22251f;color:#f0f2ea;border-color:var(--line)}.content-page .indexing-progress p{color:#b8bdb1}.content-page .indexing-progress.is-delayed{background:#3a3017;border-color:#b18b29}.content-page .indexing-progress.is-failed{background:#3b241d;border-color:#b96545}.content-page .indexing-details dl div{background:#292d26}.content-page .indexing-details dt{color:#c5c9bf}}
 .settings-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;margin:18px 0 0;background:var(--line);border:1px solid var(--line)}.settings-list div{display:flex;justify-content:space-between;gap:12px;padding:11px 12px;background:#fff}.settings-list dt{color:#686c63;font-size:11px}.settings-list dd{margin:0;font:10px var(--font-geist-mono);text-align:right;overflow-wrap:anywhere}@media(max-width:620px){.settings-list{grid-template-columns:1fr}}@media(prefers-color-scheme:dark){.content-page .settings-list div{background:#292d26}.content-page .settings-list dt{color:#c5c9bf}}
+
+/* Monochrome dark theme for every content-page surface (public pages and the
+   authenticated app), matching the marketing system: neutral near-black,
+   warm-white ink, no green accent. This layer promotes the previously
+   dark-mode-only component rules to always-on and swaps the palette to
+   neutral. It is appended last so it wins ties against the light rules and
+   the prefers-dark blocks above. */
+.content-page{--paper:#0d0d0c;--ink:#f2f0eb;--line:#2a2a27;--green:#f4f2ec;--muted:#a3a19a;background:var(--paper);color:var(--ink)}
+.content-page .brand{color:var(--ink)}
+.content-page .brand-mark{background:#f4f2ec;color:#0d0d0c}
+.content-page .nav-links,.content-page .content-nav>div{color:#a3a19a}
+.content-page .content-nav a:hover{color:var(--ink)}
+.content-page .page-badge{border-color:#2a2a27;background:#161615;color:#a3a19a;font-weight:500;letter-spacing:.1em}
+.content-page .content-hero p{color:#a3a19a}
+.content-page .button{background:#f4f2ec;color:#0d0d0c;border-color:#f4f2ec;box-shadow:none}
+.content-page .button:hover{background:#dfdcd2;border-color:#dfdcd2;transform:none}
+.content-page :is(a,button,select,textarea):focus-visible{outline:2px solid #f4f2ec}
+.content-page :is(.connection-panel,.indexed-files article,.workspace-list button,.workspace-search-results article,.feedback-panel,.search-loading,.empty-state,.citation-preview,.lineage-panel,.demo-status-row,.source-document article,.audit-hero,.trace-panel,.indexing-progress){background:#161615;color:var(--ink);border-color:#2a2a27}
+.content-page :is(input,select,textarea,button:not(.button)){background:#1c1c1b;color:var(--ink);border-color:#33332f}
+.content-page :is(p,small,code,.status-list){color:#b6b4ac}
+.content-page h1,.content-page h2,.content-page h3,.content-page b,.content-page strong{color:var(--ink)}
+.content-page :is(.trust-grid span,.workspace-search-summary>*,.audit-context span,.source-meta span){background:#242422;color:#d9d7cf}
+.content-page :is(.indexed-files a,.workspace-search-results a,.endpoint-list code){color:#f4f2ec;text-decoration-color:#5c5a54}
+.content-page .empty-state b{color:var(--ink)}
+.content-page .audit-actions :is(a,button){background:#1c1c1b;color:var(--ink);border-color:#33332f}
+.content-page mark{background:#4f4f47;color:#fff}
+.content-page pre,.content-page .content-section pre{background:#161615;border:1px solid #2a2a27;color:#d9d7cf}
+.content-page .endpoint-list,.content-page .trust-grid,.content-page .comparison-table,.content-page .workspace-list,.content-page .indexed-files,.content-page .workspace-search-results{border-color:#2a2a27}
+.content-page .endpoint-list article{border-color:#2a2a27}
+.content-page .endpoint-list span{color:#8f8d86}
+.content-page .trust-grid article{border-color:#2a2a27}
+.content-page .trust-grid p{color:#a3a19a}
+.content-page .tool-grid code{background:#1c1c1b;color:#d9d7cf}
+.content-page .tool-grid small{color:#8f8d86}
+.content-page .disclosure{background:#1d1a12;border-color:#4f4426;color:#d8c99a}
+.content-page .workspace-name>span,.content-page .trace-timeline article>span{background:#f4f2ec;color:#0d0d0c}
+.content-page .file-kind,.content-page .trace-timeline article em,.content-page .workspace-list em,.content-page .permission-badge,.content-page .confidence,.content-page .read-only{background:#242422;color:#d9d7cf;border-color:#33332f}
+.content-page .evidence-panel,.content-page .receipt-evidence{background:#161615;border-left-color:#f4f2ec}
+.content-page .primary-audit-action{background:#f4f2ec!important;color:#0d0d0c!important}
+.content-page .layer-tabs button{background:#1c1c1b;color:#a3a19a;border-color:#33332f}
+.content-page .layer-tabs button.active{background:#f4f2ec;color:#0d0d0c;border-color:#f4f2ec}
+.content-page .layer-tabs button.active span{color:#5c5a54}
+.content-page .workspace-search-controls button.active,.content-page .mode-switch button[aria-pressed="true"],.content-page .mode-selector button.active{background:#f4f2ec;color:#0d0d0c;border-color:#f4f2ec}
+.content-page .search-box{background:#1c1c1b;border-color:#33332f}
+.content-page .search-box textarea{color:var(--ink)}
+.content-page .search-box button{background:#f4f2ec;color:#0d0d0c}
+.content-page .spinner{border-color:#33332f;border-top-color:#f4f2ec}
+.content-page .indexing-progress progress{accent-color:#b5b3aa}
+.content-page .indexing-progress.is-delayed{background:#242015;border-color:#8a6f2c}
+.content-page .indexing-progress.is-failed{background:#261712;border-color:#a05a3d}
+.content-page .indexing-details dl div,.content-page .settings-list div{background:#1c1c1b}
+.content-page .indexing-details dt,.content-page .settings-list dt{color:#a3a19a}
+.content-page .coverage-card{color:#f2f0eb;background:#1d1a12;border-color:#8a6f2c}
+.content-page .coverage-card .coverage-head,.content-page .coverage-card summary{color:#f6f4ee}
+.content-page .coverage-card .coverage-head>span{color:#cfcdc4}
+.content-page .coverage-card .coverage-status{background:#4f4426;color:#f1e2b0;border:1px solid #8a6f2c}
+.content-page .coverage-card>p,.content-page .coverage-card .coverage-limitations,.content-page .coverage-card details{color:#d5d3ca}
+.content-page .coverage-card .coverage-metrics span,.content-page .coverage-card .definition-grid p{color:#d5d3ca;border-color:#57544a}
+.content-page .coverage-card .coverage-metrics b,.content-page .coverage-card .definition-grid b{color:#ffffff}
+.content-page .coverage-card .coverage-warning,.content-page .coverage-warning,.content-page .demo-coverage-warning{color:#f7ecc9!important;background:#40350f!important;border-color:#a68632!important}
+.content-page .retrieval-confidence{background:#161615;border-color:#33332f;color:var(--ink)}
+.content-page :is(.confidence-factor-summary span,.confidence-factor-list article){background:#1c1c1b;border-color:#33332f;color:var(--ink)}
+.content-page .confidence-factor-summary [data-status="reducing"]{background:#242015}
+.content-page .retrieval-confidence details{border-color:#33332f}
+.content-page .confidence-factor-summary b{color:var(--ink)}
+.content-page .conflict-panel{border-color:#8a5c3c;background:#1d1512}
+.content-page .trace-disclosure{background:#242015;border-color:#8a6f2c;color:#d8c99a}
+.content-page .trace-disclosure span{background:#4f4426;color:#f1e2b0}
+.content-page .trace-summary{background:#2a2a27}
+.content-page .trace-summary div{background:#161615}
+.content-page .file-result{background:#161615;border-color:#2a2a27}
+.content-page .file-result:hover{border-color:#4a4a44}
+.content-page .file-rank{background:#242422;color:#a3a19a}
+.content-page .file-result blockquote{color:#a3a19a;border-color:#33332f}
+.content-page .workspace-list button:hover{background:#1f1f1d}
+.content-page .feedback-prompt{background:#181811;border-color:#3c3c30}

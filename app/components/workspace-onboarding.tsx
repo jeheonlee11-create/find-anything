@@ -48,13 +48,13 @@ export function WorkspaceOnboarding({ onboardingComplete }: { onboardingComplete
     {!ready && <section className="content-section onboarding-card">
       <span className="page-badge">Private beta · 2 minute setup</span>
       <h2>Find exact evidence in your Google Drive.</h2>
-      <p>Find Anything requests read-only access. It inventories only files your connected Google account can access, extracts searchable structure, and never edits or deletes Drive files.</p>
+      <p>Find Anything only reaches the files you add through Google’s picker — the rest of your Drive is invisible to it. It extracts searchable structure from those files and never edits or deletes anything in your Drive.</p>
       <div className="trust-grid">
         <article><h3>Structured extraction</h3><p>Preserves locations such as document paragraphs, sheet cells, and slide numbers.</p></article>
         <article><h3>Evidence</h3><p>Shows the exact matched excerpt and a source link back to Drive.</p></article>
         <article><h3>Traces and receipts</h3><p>Explain what was searched, why results ranked, and how complete the answer is.</p></article>
       </div>
-      <label><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /> I understand Drive access is read-only and I can disconnect at any time.</label>
+      <label><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /> I understand Find Anything only reads the files I add, and I can disconnect and delete at any time.</label>
       <p><button className="button" disabled={!consent} onClick={finishOnboarding}>Start my 2-minute setup →</button></p>
     </section>}
     {ready && <section className="content-section"><h2>1 · Name your search space</h2><p>Use a simple name like “My Drive.” Next, you’ll connect Google Drive and start indexing.</p><form className="workspace-form" onSubmit={create}><label htmlFor="workspace-name">Workspace name</label><div><input id="workspace-name" value={name} onChange={(event) => setName(event.target.value)} minLength={2} maxLength={80} placeholder="My Drive" required/><button className="button" type="submit">Create and continue →</button></div></form></section>}

@@ -199,7 +199,7 @@ export function SettingsPanel() {
               <p>
                 {connector.scopeVerified
                   ? "Per-file Drive access verified"
-                  : "The required read-only Drive permission is missing; reconnect Drive."}
+                  : "The Drive permission needs an update; reconnect Google Drive."}
               </p>
             </div>
             <div>
@@ -216,7 +216,7 @@ export function SettingsPanel() {
             <b>No Google Drive connected</b>
             <p>
               Start the connection from your workspace. Find Anything requests
-              read-only access and never edits or deletes Drive files.
+              per-file access to what you added and never edits or deletes Drive files.
             </p>
           </div>
         )}
