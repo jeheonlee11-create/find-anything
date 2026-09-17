@@ -26,6 +26,7 @@ export const RemotionRoot: React.FC = () => {
         fps={PROMO_FPS}
         width={PROMO_WIDTH}
         height={PROMO_HEIGHT}
+        defaultProps={{ withAudio: true }}
       />
       <Composition
         id="FindAnythingWalkthrough"

@@ -14,6 +14,7 @@ import {
 } from "remotion";
 import { P, PROMO_COPY } from "./promo-config";
 import { Backdrop, EXPO_OUT, GlassCard, KineticLine, Stage, useCamera } from "./rig";
+import { beat, CUES } from "./audio";
 
 const CoverageMeter: React.FC<{ delay: number }> = ({ delay }) => {
   const frame = useCurrentFrame();
@@ -52,12 +53,12 @@ export const Scene3_TheResolution: React.FC = () => {
   const { fps } = useVideoConfig();
   const camera = useCamera([
     { at: 0, rotX: 0, rotY: 0, zoom: 1.16, x: 0, y: 70 },
-    { at: 90, rotX: 6, rotY: 4, zoom: 0.98, x: 0, y: 0 },
+    { at: beat(6), rotX: 6, rotY: 4, zoom: 0.98, x: 0, y: 0 },
     { at: 389, rotX: 4, rotY: 2, zoom: 1.0, x: 0, y: 0 },
   ]);
-  const winnerLock = spring({ frame: frame - 26, fps, config: { damping: 14, stiffness: 150 } });
-  const receiptIn = spring({ frame: frame - 120, fps, config: { damping: 17, stiffness: 80 } });
-  const vaultIn = spring({ frame: frame - 200, fps, config: { damping: 15, stiffness: 100 } });
+  const winnerLock = spring({ frame: frame - (CUES.successChime - 660), fps, config: { damping: 14, stiffness: 150 } });
+  const receiptIn = spring({ frame: frame - beat(8), fps, config: { damping: 17, stiffness: 80 } });
+  const vaultIn = spring({ frame: frame - beat(14), fps, config: { damping: 15, stiffness: 100 } });
   return (
     <AbsoluteFill>
       <Backdrop accent={P.cyan} />
@@ -128,7 +129,7 @@ export const Scene3_TheResolution: React.FC = () => {
           </div>
           <div style={{ display: "grid", gap: 12 }}>
             {PROMO_COPY.receipt.rows.map(([k, v], i) => {
-              const rowIn = spring({ frame: frame - 138 - i * 12, fps, config: { damping: 18, stiffness: 130 } });
+              const rowIn = spring({ frame: frame - beat(9) - i * Math.round(beat(1)), fps, config: { damping: 18, stiffness: 130 } });
               return (
                 <div
                   key={k}
@@ -153,7 +154,7 @@ export const Scene3_TheResolution: React.FC = () => {
             })}
           </div>
           <div style={{ marginTop: 20 }}>
-            <CoverageMeter delay={190} />
+            <CoverageMeter delay={beat(13)} />
           </div>
         </GlassCard>
 

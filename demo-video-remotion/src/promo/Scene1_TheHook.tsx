@@ -14,6 +14,7 @@ import {
 } from "remotion";
 import { P, PROMO_COPY } from "./promo-config";
 import { Backdrop, EXPO_OUT, GlassCard, KineticLine, Stage, useCamera } from "./rig";
+import { beat, CUES } from "./audio";
 
 const WarningBadge: React.FC<{
   label: string;
@@ -100,10 +101,10 @@ export const Scene1_TheHook: React.FC = () => {
   const frame = useCurrentFrame();
   const camera = useCamera([
     { at: 0, rotX: 10, rotY: -7, zoom: 1.14, x: 0, y: 20 },
-    { at: 130, rotX: 5, rotY: -2.5, zoom: 1.04, x: 0, y: 0 },
+    { at: beat(8), rotX: 5, rotY: -2.5, zoom: 1.04, x: 0, y: 0 },
     { at: 239, rotX: 4, rotY: -1.5, zoom: 1.0, x: 0, y: 0 },
   ]);
-  const questionIn = interpolate(frame, [128, 152], [0, 1], {
+  const questionIn = interpolate(frame, [CUES.textTicks[2], CUES.textTicks[2] + 24], [0, 1], {
     easing: EXPO_OUT,
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
@@ -114,8 +115,8 @@ export const Scene1_TheHook: React.FC = () => {
       <Backdrop accent={P.violet} />
       <Stage camera={camera}>
         {/* Floating conflict field, behind the type plane. */}
-        <PriceCard {...PROMO_COPY.draft} accent={P.amber} x={190} y={560} z={-260} rotY={9} delay={26} />
-        <PriceCard {...PROMO_COPY.final} accent={P.ink} x={1310} y={540} z={-180} rotY={-9} delay={34} />
+        <PriceCard {...PROMO_COPY.draft} accent={P.amber} x={190} y={560} z={-260} rotY={9} delay={beat(4)} />
+        <PriceCard {...PROMO_COPY.final} accent={P.ink} x={1310} y={540} z={-180} rotY={-9} delay={beat(5)} />
         <div
           style={{
             position: "absolute",
@@ -131,21 +132,21 @@ export const Scene1_TheHook: React.FC = () => {
         >
           ≠
         </div>
-        <WarningBadge label="CONFLICT" color={P.red} x={790} y={470} z={40} delay={58} />
-        <WarningBadge label="2 SOURCES DISAGREE" color={P.amber} x={1210} y={880} z={90} delay={72} />
-        <WarningBadge label="UNRESOLVED" color={P.red} x={330} y={860} z={140} delay={86} />
+        <WarningBadge label="CONFLICT" color={P.red} x={790} y={470} z={40} delay={beat(7)} />
+        <WarningBadge label="2 SOURCES DISAGREE" color={P.amber} x={1210} y={880} z={90} delay={beat(8)} />
+        <WarningBadge label="UNRESOLVED" color={P.red} x={330} y={860} z={140} delay={beat(9)} />
 
         {/* Kinetic hook copy on the front plane. */}
         <AbsoluteFill style={{ transform: "translateZ(220px)", justifyContent: "flex-start", alignItems: "center" }}>
           <div style={{ marginTop: 128, width: 1500 }}>
             <KineticLine
               text={PROMO_COPY.hookA}
-              delay={8}
+              delay={CUES.textTicks[0]}
               style={{ fontFamily: P.sans, fontSize: 74, fontWeight: 800, letterSpacing: "-0.03em", color: P.muted }}
             />
             <KineticLine
               text={PROMO_COPY.hookB}
-              delay={34}
+              delay={CUES.textTicks[1]}
               style={{ fontFamily: P.sans, fontSize: 108, fontWeight: 800, letterSpacing: "-0.045em", color: P.ink, marginTop: 6 }}
             />
             <div

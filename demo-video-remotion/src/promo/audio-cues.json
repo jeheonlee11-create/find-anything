@@ -1,0 +1,12 @@
+{
+  "bpm": 118,
+  "fps": 30,
+  "cues": {
+    "textTicks": [15, 45, 90],
+    "dropImpact": 240,
+    "uiGlideStart": 480,
+    "uiClick": 510,
+    "successChime": 720,
+    "airSwoosh": 1050
+  }
+}

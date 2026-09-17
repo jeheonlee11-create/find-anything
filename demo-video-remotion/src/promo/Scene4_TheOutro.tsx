@@ -13,17 +13,18 @@ import {
 } from "remotion";
 import { P, PROMO_COPY } from "./promo-config";
 import { Backdrop, GlassCard, Stage, useCamera } from "./rig";
+import { beat } from "./audio";
 
 export const Scene4_TheOutro: React.FC = () => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const camera = useCamera([
     { at: 0, rotX: 8, rotY: -5, zoom: 1.3, x: 0, y: -40 },
-    { at: 90, rotX: 0, rotY: 0, zoom: 1.0, x: 0, y: 0 },
+    { at: beat(6), rotX: 0, rotY: 0, zoom: 1.0, x: 0, y: 0 },
     { at: 299, rotX: 0, rotY: 0, zoom: 1.02, x: 0, y: 0 },
   ]);
-  const heroIn = spring({ frame: frame - 30, fps, config: { damping: 16, stiffness: 70, mass: 1.1 } });
-  const ctaIn = spring({ frame: frame - 96, fps, config: { damping: 13, stiffness: 130 } });
+  const heroIn = spring({ frame: frame - beat(2), fps, config: { damping: 16, stiffness: 70, mass: 1.1 } });
+  const ctaIn = spring({ frame: frame - beat(6), fps, config: { damping: 13, stiffness: 130 } });
   const ring = interpolate(frame, [30, 240], [0, 360], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   return (
     <AbsoluteFill>

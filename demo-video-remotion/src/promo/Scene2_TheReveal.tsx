@@ -22,9 +22,10 @@ import {
   useCamera,
   useClickBounce,
 } from "./rig";
+import { beat, CUES } from "./audio";
 
-/** Scene-local frame of the cursor's click on Trace & Compare. */
-export const TRACE_CLICK_AT = 300;
+/** Scene-local frame of the cursor's click (global cue frame 510). */
+export const TRACE_CLICK_AT = CUES.uiClick - 240;
 
 const Row: React.FC<{
   file: string;
@@ -68,8 +69,8 @@ export const Scene2_TheReveal: React.FC = () => {
   // The swoop: angled isometric overview → head-on flat close-up.
   const camera = useCamera([
     { at: 0, rotX: 34, rotY: -18, zoom: 0.78, x: 60, y: -30 },
-    { at: 120, rotX: 22, rotY: -11, zoom: 0.92, x: 30, y: -6 },
-    { at: 230, rotX: 0, rotY: 0, zoom: 1.18, x: 0, y: 96 },
+    { at: beat(8), rotX: 22, rotY: -11, zoom: 0.92, x: 30, y: -6 },
+    { at: beat(15), rotX: 0, rotY: 0, zoom: 1.18, x: 0, y: 96 },
     { at: 419, rotX: 0, rotY: 0, zoom: 1.2, x: 0, y: 100 },
   ]);
 
@@ -156,9 +157,9 @@ export const Scene2_TheReveal: React.FC = () => {
                 <div style={{ fontFamily: P.mono, fontSize: 13, letterSpacing: "0.14em", color: P.muted }}>
                   QUERY · “current enterprise price”
                 </div>
-                <Row file={PROMO_COPY.final.file} meta={PROMO_COPY.final.tag} price={PROMO_COPY.final.price} accent={P.green} delay={96} />
-                <Row file={PROMO_COPY.draft.file} meta={PROMO_COPY.draft.tag} price={PROMO_COPY.draft.price} accent={P.amber} delay={112} />
-                <Row file="Finance — Model.xlsx" meta="RESTRICTED · NOT READ" price="—" accent={P.red} delay={128} />
+                <Row file={PROMO_COPY.final.file} meta={PROMO_COPY.final.tag} price={PROMO_COPY.final.price} accent={P.green} delay={beat(6)} />
+                <Row file={PROMO_COPY.draft.file} meta={PROMO_COPY.draft.tag} price={PROMO_COPY.draft.price} accent={P.amber} delay={beat(7)} />
+                <Row file="Finance — Model.xlsx" meta="RESTRICTED · NOT READ" price="—" accent={P.red} delay={beat(8)} />
 
                 {/* Action row */}
                 <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
@@ -202,14 +203,14 @@ export const Scene2_TheReveal: React.FC = () => {
           // The button lives inside the 3D stage; these are its SCREEN
           // coordinates under the settled close-up pose (zoom 1.2, y+100).
           {
-            from: 180,
-            to: 250,
+            from: CUES.uiGlideStart - 240,
+            to: TRACE_CLICK_AT - 8,
             start: { x: 1800, y: 1030 },
             end: { x: 1452, y: 668 },
             c1: { x: 1640, y: 1000 },
             c2: { x: 1520, y: 720 },
           },
-          { from: 262, to: TRACE_CLICK_AT, start: { x: 1452, y: 668 }, end: { x: 1441, y: 655 }, clickAt: TRACE_CLICK_AT },
+          { from: TRACE_CLICK_AT - 8, to: TRACE_CLICK_AT, start: { x: 1452, y: 668 }, end: { x: 1441, y: 655 }, clickAt: TRACE_CLICK_AT },
         ]}
       />
 
@@ -222,7 +223,7 @@ export const Scene2_TheReveal: React.FC = () => {
             fontSize: 16,
             letterSpacing: "0.22em",
             color: P.muted,
-            opacity: interpolate(frame, [150, 175, 380, 405], [0, 1, 1, 0], {
+            opacity: interpolate(frame, [beat(10), beat(12), 380, 405], [0, 1, 1, 0], {
               extrapolateLeft: "clamp",
               extrapolateRight: "clamp",
             }),

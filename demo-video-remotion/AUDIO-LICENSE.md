@@ -31,3 +31,12 @@ third-party attribution or royalty obligation.
 npm run audio   # rewrites public/audio/music.wav and effects.wav
 ```
 Adjust the chord table, tempo of events, or gains in `scripts/make-audio.mjs`.
+
+## Promo stems (added 2026-09-17)
+| Stem | File | Description |
+|---|---|---|
+| Promo music | `public/audio/promo-music.wav` | Original 118 BPM minimalist-electronica score synthesized by `scripts/make-promo-audio.mjs`: sub drone + tick (0–8s), kick/hat/bass/arpeggio drop (8–22s), Am–F–C–G pads with bell accents (22–35s), Am(add9) outro pad (35–45s). |
+| Promo effects | `public/audio/promo-effects.wav` | Text ticks, drop impact, cursor glide + click, success chime, air swoosh — baked at the exact cue frames in `src/promo/audio-cues.json`. |
+
+Same policy as above: all waveforms generated from oscillators/noise in the
+script; no samples, no stock audio, no voiceover.
