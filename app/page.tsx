@@ -23,7 +23,7 @@ export default function Home() {
 
     <section className="marketing-hero marketing-shell" id="top">
       <div className="marketing-hero-copy">
-        <div className="marketing-eyebrow">Invite-only beta</div>
+        <div className="marketing-eyebrow">Public beta</div>
         <h1>Retrieval evidence for AI agents.</h1>
         <p>Find Anything searches the Google Drive files you share with it, keeps conflicting sources visible, and shows exactly what was found, missed, or off-limits.</p>
         <div className="marketing-actions">
@@ -60,8 +60,8 @@ export default function Home() {
     </section>
 
     <footer className="marketing-footer marketing-shell">
-      <div><a className="marketing-brand" href="#top"><span>F</span>Find Anything</a><p>Trusted knowledge for AI agents. Private beta.</p></div>
-      <nav aria-label="Legal and trust"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/trust">Security</a><a href="/beta/access-required">Request access</a><a href="mailto:hello@findanything.dev">Contact</a></nav>
+      <div><a className="marketing-brand" href="#top"><span>F</span>Find Anything</a><p>Trusted knowledge for AI agents. Public beta.</p></div>
+      <nav aria-label="Legal and trust"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/trust">Security</a><a href="mailto:hello@findanything.dev">Contact</a></nav>
     </footer>
   </main>;
 }

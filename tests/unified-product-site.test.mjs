@@ -129,7 +129,10 @@ test("an unapproved signed-in user reaches the invite-only fallback, never Googl
   const fallback = await request("/beta/access-required");
   assert.equal(fallback.status, 200);
   const html = await fallback.text();
-  assert.match(html, /currently invite-only/i);
+  // The suite runs under a non-"invited" denying mode, so the fallback shows
+  // its account-specific wording; under BETA_ACCESS_MODE=invited the page
+  // renders the invite-only wording instead (same honesty guarantees).
+  assert.match(html, /cannot connect Google Drive right now/i);
   assert.match(html, /No Google authorization was started/i);
   assert.doesNotMatch(html, /test user|test-user|Google Cloud|consent screen/i);
 });

@@ -7,13 +7,14 @@ import { chatGPTSignInPath } from "@/app/chatgpt-auth";
 export const metadata: Metadata = { title: "Invite-only beta — Find Anything" };
 
 /**
- * The honest fallback for anyone the invite gate denies, and the only
- * request-access surface in the product. It states plainly that access is
- * invite-only, and it deliberately says nothing that would imply anything about
+ * The honest fallback for anyone the connect gate denies (the whole public in
+ * "invited" mode; only disabled accounts in "open" mode). The copy follows the
+ * active mode, and it deliberately says nothing that would imply anything about
  * a specific email: not whether an account exists, not whether an invitation
  * exists, and nothing at all about how the founder configures Google.
  */
 export default function AccessRequired() {
+  const invited = process.env.BETA_ACCESS_MODE === "invited";
   return (
     <main className="marketing-page">
       <nav className="marketing-nav marketing-shell" aria-label="Main navigation">
@@ -24,16 +25,16 @@ export default function AccessRequired() {
 
       <section className="marketing-subpage marketing-shell">
         <div>
-          <div className="marketing-eyebrow">Invite-only beta</div>
-          <h1>Find Anything is currently invite-only.</h1>
-          <p className="marketing-lede">Connecting Google Drive requires an invitation from the founder. We onboard a small number of teams at a time so each one gets a guided setup and a real retrieval review.</p>
+          <div className="marketing-eyebrow">{invited ? "Invite-only beta" : "Access"}</div>
+          <h1>{invited ? "Find Anything is currently invite-only." : "This account cannot connect Google Drive right now."}</h1>
+          <p className="marketing-lede">{invited ? "Connecting Google Drive requires an invitation from the founder. We onboard a small number of teams at a time so each one gets a guided setup and a real retrieval review." : "Connecting is disabled for the account you are signed in with. Nothing about the account\u2019s Google side was checked or changed \u2014 the decision is Find Anything\u2019s alone."}</p>
           <ul className="marketing-fineprint-list">
-            <li>You are signed in, and this account is not on the current invitation list.</li>
+            <li>{invited ? "You are signed in, and this account is not on the current invitation list." : "You are signed in, and connecting is currently disabled for this account."}</li>
             <li>No Google authorization was started, and nothing was changed in your Google account.</li>
             <li>This page cannot tell you anything about a specific email address beyond the account you are signed in with.</li>
           </ul>
-          <h2>Already invited?</h2>
-          <p className="marketing-lede">Sign in with the exact email your invitation was issued to, then start the connection again.</p>
+          <h2>{invited ? "Already invited?" : "Signed in with the wrong account?"}</h2>
+          <p className="marketing-lede">{invited ? "Sign in with the exact email your invitation was issued to, then start the connection again." : "Sign in with the account you normally use, then start the connection again."}</p>
           <div className="marketing-actions">
             <Link className="marketing-primary" href={chatGPTSignInPath(CONNECT_PATH)}>Sign in and connect Google Drive</Link>
             <Link className="marketing-secondary" href={APP_BASE_PATH}>Open my workspaces</Link>
