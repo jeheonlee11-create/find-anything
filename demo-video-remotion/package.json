@@ -2,7 +2,7 @@
   "name": "find-anything-demo-video",
   "version": "1.0.0",
   "private": true,
-  "description": "Find Anything — 55s product demo (React + Remotion). Standalone; does not touch the main app.",
+  "description": "Find Anything \u2014 55s product demo (React + Remotion). Standalone; does not touch the main app.",
   "scripts": {
     "studio": "remotion studio",
     "render": "remotion render FindAnythingDemo out/find-anything-demo-1080p.mp4 --props=./props.audio.json",
@@ -14,7 +14,10 @@
     "render:walkthrough": "remotion render FindAnythingWalkthrough out/find-anything-walkthrough-1080p.mp4 --props=./props.audio.json",
     "render:walkthrough:silent": "remotion render FindAnythingWalkthrough out/find-anything-walkthrough-silent.mp4 --props=./props.silent.json",
     "render:walkthrough:preview": "remotion render FindAnythingWalkthrough out/find-anything-walkthrough-preview.mp4 --props=./props.audio.json --scale=0.5 --crf=30",
-    "thumbnail:walkthrough": "remotion still FindAnythingWalkthrough out/walkthrough-thumbnail.png --frame=90"
+    "thumbnail:walkthrough": "remotion still FindAnythingWalkthrough out/walkthrough-thumbnail.png --frame=90",
+    "render:promo": "remotion render FindAnythingPromo out/find-anything-promo-1080p.mp4",
+    "render:promo:preview": "remotion render FindAnythingPromo out/find-anything-promo-preview.mp4 --scale=0.5 --crf=30",
+    "still:promo": "remotion still FindAnythingPromo out/qa/promo-still.png"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.0",
