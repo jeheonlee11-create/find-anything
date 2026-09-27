@@ -154,9 +154,17 @@ async function refreshConnectorAccessToken(connector: StoredConnector) {
   }
 }
 
+/**
+ * A real Google token-refresh call typically finishes in well under a
+ * second, so polling every 250ms for up to 40 attempts (a 10s worst case)
+ * only ever added latency: any request landing while the background
+ * indexing poll (every 3s) or a search happened to be mid-refresh sat idle
+ * far longer than the refresh itself ever took. Poll faster and give up
+ * sooner instead of hanging.
+ */
 async function waitForConcurrentRefresh(connectorId: string) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, 100));
     const current = await refreshedConnectorToken(connectorId);
     if (!current) throw new Error("GOOGLE_CONNECTOR_NOT_FOUND");
     if (current.status === "reauthorization_required")

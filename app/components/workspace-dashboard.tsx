@@ -132,6 +132,13 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
     if (!background) setLoading(false);
   }, [router, workspaceId]);
   useEffect(() => {
+    // Warm the Google Picker script as soon as the dashboard renders instead
+    // of waiting for the "Add files from Drive" click. Without this, every
+    // click paid for a fresh <script> fetch plus Google's internal
+    // gapi.load("picker") round trip before the picker could even open.
+    void loadPickerLibrary().catch(() => undefined);
+  }, []);
+  useEffect(() => {
     const params = new URLSearchParams(window.location.search),
       oauthError = params.get("connector_error");
     if (oauthError) {
@@ -212,16 +219,22 @@ export function WorkspaceDashboard({ workspaceId }: { workspaceId: string }) {
     setPickerBusy(true);
     setError("");
     try {
-      const response = await fetch(
+      // The token fetch and the picker script load are independent — run
+      // them together instead of one after the other. loadPickerLibrary()
+      // usually resolves instantly here since the mount-time warmup above
+      // already started (or finished) it.
+      const [response] = await Promise.all([
+        fetch(
           `/api/workspaces/${encodeURIComponent(workspaceId)}/google-drive/picker-token`,
           { method: "POST" },
         ),
-        body = await response.json().catch(() => ({}));
+        loadPickerLibrary(),
+      ]);
+      const body = await response.json().catch(() => ({}));
       if (!response.ok) {
         setError(body.error?.message ?? "The file picker could not be opened.");
         return;
       }
-      await loadPickerLibrary();
       const pickerApi = window.google?.picker;
       if (!pickerApi) throw new Error("PICKER_LIBRARY_UNAVAILABLE");
       const picker = new pickerApi.PickerBuilder()
