@@ -1,9 +1,11 @@
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { sourceFiles, syncRuns } from "@/db/schema";
+import { syncRuns } from "@/db/schema";
 import { connectorForWorkspace } from "@/lib/google-drive/repository";
 import { currentAuthorizedDriveSourceIds } from "@/lib/google-drive/permission";
-import { buildCoverageSnapshot } from "./coverage-map";
+import { connectorSearchAccess } from "@/lib/google-drive/connector-health";
+import { buildCoverageSnapshot, summarizeCoverageInventory } from "./coverage-map";
+import { workspaceCoverageRows } from "./repository";
 
 /**
  * Inventory coverage = processed current inventory records / authorized records discovered.
@@ -16,39 +18,15 @@ export async function liveWorkspaceCoverage(workspaceId: string) {
     const snapshot = buildCoverageSnapshot({ authorization: "unavailable", authorizedDiscovered: 0, knownInventoryRows: 0, indexed: 0, searchable: 0, failed: 0, pending: 0, unsupported: 0, paginationComplete: false, lastSuccessfulSyncAt: null });
     return { ...snapshot, workspaceId, snapshot };
   }
-  if (connector.status !== "connected") {
+  if (!connectorSearchAccess(connector).allowed) {
     const snapshot = buildCoverageSnapshot({ authorization: connector.status === "reauthorization_required" ? "reauthorization_required" : "unavailable", authorizedDiscovered: 0, knownInventoryRows: 0, indexed: 0, searchable: 0, failed: 0, pending: 0, unsupported: 0, paginationComplete: false, lastSuccessfulSyncAt: connector.lastSyncAt });
     return { ...snapshot, workspaceId, snapshot };
   }
   const inventory = await currentAuthorizedDriveSourceIds(connector),
     db = await getDb(),
-    rows = await db
-      .select({
-        sourceId: sourceFiles.sourceId,
-        indexStatus: sourceFiles.indexStatus,
-        searchableStatus: sourceFiles.searchableStatus,
-        extractionMode: sourceFiles.extractionMode,
-        updatedAt: sourceFiles.updatedAt,
-      })
-      .from(sourceFiles)
-      .where(
-        and(
-          eq(sourceFiles.workspaceId, workspaceId),
-          eq(sourceFiles.connectorId, connector.id),
-          eq(sourceFiles.trashed, false),
-        ),
-      ),
-    current = rows.filter((row) => inventory.sourceIds.has(row.sourceId)),
-    count = (status: string) => current.filter((file) => file.indexStatus === status).length,
-    indexed = count("indexed"),
-    failed = count("failed"),
-    pending = count("pending"),
-    unsupported = count("unsupported"),
-    processed = indexed + failed + unsupported,
-    eligibleSupported = indexed + failed + pending,
-    searchable = current.filter((file) => file.searchableStatus === "searchable").length,
-    structural = current.filter((file) => file.extractionMode === "structured").length,
-    fallback = current.filter((file) => file.extractionMode === "fallback").length,
+    current = await workspaceCoverageRows(workspaceId, inventory.sourceIds, connector.id),
+    summary = summarizeCoverageInventory(current, { paginationComplete: inventory.paginationComplete }),
+    { indexed, failed, pending, unsupported, processed, eligibleSupported, searchable, structural, fallback } = summary,
     latest = await db
       .select()
       .from(syncRuns)
@@ -56,12 +34,7 @@ export async function liveWorkspaceCoverage(workspaceId: string) {
       .orderBy(desc(syncRuns.startedAt))
       .limit(1)
       .then((items) => items[0] ?? null),
-    reasons = [
-      !inventory.paginationComplete ? "Drive inventory pagination did not complete." : null,
-      failed ? `${failed} supported files failed indexing.` : null,
-      pending ? `${pending} supported files are pending indexing.` : null,
-      unsupported ? `${unsupported} files use formats that are not currently searchable.` : null,
-    ].filter(Boolean);
+    reasons = summary.incompleteReasons;
   const snapshot = buildCoverageSnapshot({
     authorization: "authorized",
     authorizedDiscovered: inventory.filesDiscovered,

@@ -2,7 +2,7 @@ import {
   calculateRetrievalConfidence,
   type RetrievalConfidence,
 } from "./confidence.ts";
-import { buildCoverageSnapshot, type CoverageSnapshot } from "./coverage-map.ts";
+import { buildCoverageSnapshot, summarizeCoverageInventory, type CoverageInventoryRow, type CoverageSnapshot } from "./coverage-map.ts";
 import { calculateLiteralRanking, type RankingBreakdown } from "./ranking.ts";
 
 export type WorkspaceFileType = "all" | "docs" | "slides" | "sheets" | "pdf";
@@ -28,6 +28,11 @@ export interface WorkspaceSearchFile {
     structuralLocation: Record<string, unknown>;
     contentHash: string;
   }>;
+}
+/** A stored file's status, searchable or hidden; used only for coverage. */
+export interface WorkspaceCoverageRow extends CoverageInventoryRow {
+  id: string;
+  workspaceId: string;
 }
 export interface WorkspaceCitation {
   fileId: string;
@@ -232,6 +237,11 @@ export function searchWorkspaceFiles(input: {
     lastSuccessfulSyncAt: string | null;
     knownRemovedOrUnauthorized?: number;
   };
+  /**
+   * Every authorized stored file, including hidden failed/unsupported ones,
+   * for coverage only. Omitted: coverage is derived from `files`.
+   */
+  coverageRows?: WorkspaceCoverageRow[];
   rankingContext?: { authoritativeFileIds?: Set<string>; unresolvedConflictFileIds?: Set<string>; conflictAssessmentComplete?: boolean };
 }): WorkspaceSearchResponse {
   const query = input.query.trim();
@@ -266,11 +276,31 @@ export function searchWorkspaceFiles(input: {
     content: 0,
     combined: 0,
   };
-  const permissionDecisions = workspaceFiles.map((file) => ({
-    fileId: file.id,
-    decision: "allowed" as const,
-    reason: "workspace membership and file workspace matched",
-  }));
+  // Coverage counts the whole authorized inventory, hidden failed/unsupported
+  // rows included. It never widens `workspaceFiles`, the only set searched.
+  const coverageRows = new Map<string, CoverageInventoryRow>(
+    workspaceFiles.map((file) => [file.id, { indexStatus: file.indexStatus, searchableStatus: "searchable", extractionMode: file.extractionMode }]),
+  );
+  const coverageOnlyIds: string[] = [];
+  for (const row of input.coverageRows ?? [])
+    if (row.workspaceId === input.workspaceId && !coverageRows.has(row.id)) {
+      coverageRows.set(row.id, row);
+      coverageOnlyIds.push(row.id);
+    }
+  const paginationComplete = input.permissionContext?.paginationComplete ?? true;
+  const inventory = summarizeCoverageInventory([...coverageRows.values()], { paginationComplete });
+  const permissionDecisions = [
+    ...workspaceFiles.map((file) => ({
+      fileId: file.id,
+      decision: "allowed" as const,
+      reason: "workspace membership and file workspace matched",
+    })),
+    ...coverageOnlyIds.map((fileId) => ({
+      fileId,
+      decision: "allowed" as const,
+      reason: "authorized, but not searchable because its content was not indexed",
+    })),
+  ];
   const thresholdDecisions: Array<{
     fileId: string;
     decision: "included" | "excluded";
@@ -474,65 +504,32 @@ export function searchWorkspaceFiles(input: {
       : null;
   });
   const nextOffset = offset + results.length;
-  const failedFiles = workspaceFiles.filter(
-    (file) => file.indexStatus === "failed",
-  ).length;
-  const pendingFiles = workspaceFiles.filter(
-    (file) => file.indexStatus === "pending",
-  ).length;
-  const unsupportedFiles = workspaceFiles.filter(
-    (file) => file.indexStatus === "unsupported",
-  ).length;
-  const indexedFiles = workspaceFiles.filter(
-    (file) => file.indexStatus === "indexed",
-  ).length;
-  // Kept strictly distinct from `indexedFiles`: these rows are name-searchable
-  // only, their content has never been read.
-  const metadataOnlyFiles = workspaceFiles.filter(
-    (file) => file.indexStatus === "metadata",
-  ).length;
-  const paginationComplete =
-      input.permissionContext?.paginationComplete ?? true,
-    incompleteReasons = [
-      !paginationComplete
-        ? "Drive authorization inventory pagination did not complete."
-        : null,
-      failedFiles ? `${failedFiles} files failed indexing.` : null,
-      pendingFiles ? `${pendingFiles} files are pending indexing.` : null,
-      metadataOnlyFiles
-        ? `${metadataOnlyFiles} files are searchable by name only; their content is not indexed yet.`
-        : null,
-      unsupportedFiles
-        ? `${unsupportedFiles} files were skipped because their format is unsupported.`
-        : null,
-    ].filter(Boolean) as string[];
-
   const coverage: WorkspaceSearchResponse["coverage"] = {
-    totalKnownFiles: workspaceFiles.length,
+    totalKnownFiles: inventory.knownInventoryRows,
     filesSearched: indexedEligible.length,
     nameOnlyFilesSearched: metadataEligible.length,
-    indexedFiles,
-    metadataOnlyFiles,
-    failedFiles,
-    pendingFiles,
-    unsupportedFiles,
+    indexedFiles: inventory.indexed,
+    metadataOnlyFiles: inventory.metadataOnly,
+    failedFiles: inventory.failed,
+    pendingFiles: inventory.pending,
+    unsupportedFiles: inventory.unsupported,
     authorizedFilesDiscovered:
       input.permissionContext?.authorizedFilesDiscovered ??
-      workspaceFiles.length,
+      inventory.knownInventoryRows,
     paginationComplete,
     lastSuccessfulSyncAt:
       input.permissionContext?.lastSuccessfulSyncAt ?? null,
-    incompleteReasons,
-    complete: incompleteReasons.length === 0,
+    incompleteReasons: inventory.incompleteReasons,
+    complete: inventory.complete,
     snapshot: buildCoverageSnapshot({
       authorization: "authorized",
-      authorizedDiscovered: input.permissionContext?.authorizedFilesDiscovered ?? workspaceFiles.length,
-      knownInventoryRows: workspaceFiles.length,
-      indexed: indexedFiles,
-      searchable: workspaceFiles.filter((file) => file.indexStatus === "indexed" && file.units.length > 0).length,
-      failed: failedFiles,
-      pending: pendingFiles,
-      unsupported: unsupportedFiles,
+      authorizedDiscovered: input.permissionContext?.authorizedFilesDiscovered ?? inventory.knownInventoryRows,
+      knownInventoryRows: inventory.knownInventoryRows,
+      indexed: inventory.indexed,
+      searchable: inventory.searchable,
+      failed: inventory.failed,
+      pending: inventory.pending,
+      unsupported: inventory.unsupported,
       knownRemovedOrUnauthorized: input.permissionContext?.knownRemovedOrUnauthorized ?? 0,
       paginationComplete,
       lastSuccessfulSyncAt: input.permissionContext?.lastSuccessfulSyncAt ?? null,

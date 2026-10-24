@@ -4,6 +4,7 @@ import test from "node:test";
 import { buildCoverageSnapshot } from "../lib/workspace-search/coverage-map.ts";
 import { searchWorkspaceFiles } from "../lib/workspace-search/core.ts";
 import { reconcileInterruptedRun } from "../lib/google-drive/sync-lifecycle.ts";
+import { classifyConnectorFailure, connectorSearchAccess } from "../lib/google-drive/connector-health.ts";
 
 // Any value other than "invited" or "open-local-test" makes the invite gate deny
 // without touching the database, which is exactly the unapproved-user condition
@@ -403,16 +404,12 @@ test("revoked Drive authorization fails closed everywhere it is observable", asy
     ),
   );
 
-  const [authorization, searchRoute, sync] = await Promise.all([
-    source("lib/workspace-search/authorization.ts"),
-    source("app/api/workspaces/[workspaceId]/search/route.ts"),
-    source("lib/google-drive/sync.ts"),
-  ]);
-  assert.match(authorization, /status !== "connected"/);
+  const authorization = await source("lib/workspace-search/authorization.ts");
   assert.match(authorization, /GOOGLE_DRIVE_NOT_CONNECTED/);
-  assert.match(searchRoute, /status !== "connected"/);
-  assert.match(sync, /invalid_grant/);
-  assert.match(sync, /reauthorization_required/);
+  // Revocation blocks search (and every route sharing this decision), and an
+  // invalid_grant refresh flips the connector to reauthorization_required.
+  assert.equal(connectorSearchAccess({ status: "reauthorization_required", lastErrorCode: "GOOGLE_REAUTHORIZATION_REQUIRED" }).allowed, false);
+  assert.equal(classifyConnectorFailure({ code: "invalid_grant", retryable: false }).status, "reauthorization_required");
 });
 
 test("the durable indexer still resumes from its persisted checkpoint", () => {

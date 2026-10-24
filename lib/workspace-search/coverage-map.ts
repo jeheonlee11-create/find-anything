@@ -87,6 +87,51 @@ export function buildCoverageSnapshot(input: {
   };
 }
 
+/** Status-only view of one stored file record; never carries content. */
+export interface CoverageInventoryRow {
+  indexStatus: string;
+  searchableStatus?: string | null;
+  extractionMode?: string | null;
+}
+
+/**
+ * The single count of what a workspace's authorized inventory covers, shared
+ * by the coverage endpoint and every search response. Rows must include
+ * hidden (failed/unsupported) records: counting only searchable rows is what
+ * made failures invisible and let a search claim complete coverage.
+ */
+export function summarizeCoverageInventory(rows: CoverageInventoryRow[], options: { paginationComplete: boolean }) {
+  const count = (status: string) => rows.filter((row) => row.indexStatus === status).length,
+    indexed = count("indexed"),
+    metadataOnly = count("metadata"),
+    failed = count("failed"),
+    pending = count("pending"),
+    unsupported = count("unsupported"),
+    incompleteReasons = [
+      !options.paginationComplete ? "Drive authorization inventory pagination did not complete." : null,
+      failed ? `${failed} files failed indexing.` : null,
+      pending ? `${pending} files are pending indexing.` : null,
+      metadataOnly ? `${metadataOnly} files are searchable by name only; their content is not indexed yet.` : null,
+      unsupported ? `${unsupported} files were skipped because their format is unsupported.` : null,
+    ].filter(Boolean) as string[];
+  return {
+    knownInventoryRows: rows.length,
+    indexed,
+    metadataOnly,
+    failed,
+    pending,
+    unsupported,
+    /** Content-searchable: indexed AND exposed to search. */
+    searchable: rows.filter((row) => row.indexStatus === "indexed" && row.searchableStatus === "searchable").length,
+    structural: rows.filter((row) => row.extractionMode === "structured").length,
+    fallback: rows.filter((row) => row.extractionMode === "fallback").length,
+    processed: indexed + failed + unsupported,
+    eligibleSupported: indexed + failed + pending,
+    incompleteReasons,
+    complete: incompleteReasons.length === 0,
+  };
+}
+
 function ratio(numerator: number, denominator: number) {
   return denominator > 0 ? Number((numerator / denominator).toFixed(4)) : null;
 }

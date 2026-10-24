@@ -25,7 +25,12 @@ import {
   setConnectorStatus,
   updateConnectorTokens,
 } from "./repository";
-import { GoogleOAuthError, refreshAccessToken } from "./oauth";
+import { refreshAccessToken } from "./oauth";
+import {
+  classifyConnectorFailure,
+  hasAcceptedDriveScope,
+  isUsableConnectorStatus,
+} from "./connector-health";
 import {
   driveFileBytes,
   isExtractableDriveMimeType,
@@ -125,8 +130,10 @@ async function refreshConnectorAccessToken(connector: StoredConnector) {
   await setConnectorStatus(connector.id, "token_refreshing");
   try {
     const refreshToken = await decryptSecret(connector.refreshTokenCiphertext),
-      tokens = await refreshAccessToken(refreshToken),
-      tokenExpiresAt = new Date(
+      tokens = await refreshAccessToken(refreshToken);
+    if (!hasAcceptedDriveScope(tokens.scope))
+      throw new Error("GOOGLE_REQUIRED_SCOPE_MISSING");
+    const tokenExpiresAt = new Date(
         Date.now() + tokens.expires_in * 1000,
       ).toISOString();
     await updateConnectorTokens(connector.id, {
@@ -139,15 +146,12 @@ async function refreshConnectorAccessToken(connector: StoredConnector) {
     await setConnectorStatus(connector.id, "connected", null, false);
     return tokens.access_token;
   } catch (error) {
-    const reauthorization =
-      error instanceof GoogleOAuthError && error.code === "invalid_grant";
-    await setConnectorStatus(
-      connector.id,
-      reauthorization ? "reauthorization_required" : "error",
-      reauthorization
-        ? "GOOGLE_REAUTHORIZATION_REQUIRED"
-        : "GOOGLE_TOKEN_REFRESH_FAILED",
-    );
+    // invalid_grant / revoked / missing scope -> reauthorization_required.
+    // A transient failure (Google 5xx, 429, network) leaves the connector
+    // `connected` with the code recorded, so the next request simply retries
+    // the refresh instead of search staying disabled until a manual resync.
+    const failure = classifyConnectorFailure(error);
+    await setConnectorStatus(connector.id, failure.status, failure.code, false);
     throw error;
   } finally {
     await releaseTokenRefreshLease(connector.id, leaseOwner);
@@ -169,8 +173,10 @@ async function waitForConcurrentRefresh(connectorId: string) {
     if (!current) throw new Error("GOOGLE_CONNECTOR_NOT_FOUND");
     if (current.status === "reauthorization_required")
       throw new Error("GOOGLE_REAUTHORIZATION_REQUIRED");
+    if (current.status === "error" || current.status === "revoked")
+      throw new Error(current.lastErrorCode ?? "GOOGLE_TOKEN_REFRESH_FAILED");
     if (
-      current.status === "connected" &&
+      isUsableConnectorStatus(current.status) &&
       current.tokenExpiresAt &&
       Date.parse(current.tokenExpiresAt) > Date.now() + 60_000
     )
@@ -976,19 +982,19 @@ export async function synchronizeGoogleDrive(
       paginationComplete,
       errorCode: safeErrorCode(error),
     });
-    const requiresReauthorization =
-      (error instanceof GoogleOAuthError && error.code === "invalid_grant") ||
-      safeErrorCode(error) === "GOOGLE_REFRESH_TOKEN_MISSING";
+    // Only a permanent failure may leave the connector unusable; a transient
+    // one (Drive 5xx, rate limit, timeout) keeps it `connected` for search
+    // and the next sync, without recording a successful sync time.
+    const failure = classifyConnectorFailure(error);
     await setConnectorStatus(
       connector.id,
-      requiresReauthorization
-        ? "reauthorization_required"
-        : status === "partial"
-          ? "connected"
-          : "error",
-      requiresReauthorization
-        ? "GOOGLE_REAUTHORIZATION_REQUIRED"
+      failure.status === "error" && status === "partial"
+        ? "connected"
+        : failure.status,
+      failure.status === "reauthorization_required"
+        ? failure.code
         : safeErrorCode(error),
+      status === "partial",
     );
     throw error;
   }

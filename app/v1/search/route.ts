@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireWorkspaceApiKey } from "@/lib/api/auth";
-import { indexedWorkspaceFiles } from "@/lib/workspace-search/repository";
+import { indexedWorkspaceFiles, workspaceCoverageRows } from "@/lib/workspace-search/repository";
 import {
   searchWorkspaceFiles,
   type WorkspaceFileType,
@@ -9,6 +9,7 @@ import {
 import { persistSearchAudit } from "@/lib/workspace-search/audit";
 import { connectorForWorkspace } from "@/lib/google-drive/repository";
 import { currentAuthorizedDriveSourceIds } from "@/lib/google-drive/permission";
+import { connectorSearchAccess, permanentConnectorFailure } from "@/lib/google-drive/connector-health";
 import { isDemoWorkspace } from "@/lib/auth/api-authorization";
 import { calculateRetrievalConfidence } from "@/lib/workspace-search/confidence";
 import { conflictsForFiles, unresolvedConflictCount } from "@/lib/conflicts/repository";
@@ -57,14 +58,14 @@ export async function POST(request: Request) {
       },
       { status: 400 },
     );
-  const connector = await connectorForWorkspace(principal.workspaceId, isDemoWorkspace(principal.workspaceId) ? "demo_fixture" : "google_drive");
-  if (!connector || connector.status !== "connected")
+  const connector = await connectorForWorkspace(principal.workspaceId, isDemoWorkspace(principal.workspaceId) ? "demo_fixture" : "google_drive"),
+    access = connectorSearchAccess(connector);
+  if (!connector || !access.allowed)
     return NextResponse.json(
       {
-        error: {
-          code: "GOOGLE_DRIVE_NOT_CONNECTED",
-          message: "The API-key workspace has no active Drive connection.",
-        },
+        error: access.allowed
+          ? { code: "GOOGLE_DRIVE_NOT_CONNECTED", message: "The API-key workspace has no active Drive connection." }
+          : { code: access.code, message: access.message },
       },
       { status: 409 },
     );
@@ -73,7 +74,13 @@ export async function POST(request: Request) {
     permissionInventory = isDemoWorkspace(principal.workspaceId)
       ? { sourceIds: undefined, filesDiscovered: 5, paginationComplete: true }
       : await currentAuthorizedDriveSourceIds(connector);
-  } catch {
+  } catch (error) {
+    const permanent = permanentConnectorFailure(error);
+    if (permanent)
+      return NextResponse.json(
+        { error: { ...permanent, requestId } },
+        { status: 409, headers: { "cache-control": "no-store", "x-request-id": requestId } },
+      );
     return NextResponse.json(
       {
         error: {
@@ -95,6 +102,7 @@ export async function POST(request: Request) {
       principal.workspaceId,
       permissionInventory.sourceIds,
     ),
+    coverageRows = await workspaceCoverageRows(principal.workspaceId, permissionInventory.sourceIds),
     detectedConflicts = await conflictsForFiles(principal.workspaceId, files.map((file) => file.id)),
     unresolvedFileIds = new Set(detectedConflicts.filter((item) => item.status === "unresolved").flatMap((item) => [item.leftFileId, item.rightFileId])),
     authoritativeFileIds = new Set(detectedConflicts.filter((item) => item.status === "authoritative_source" && item.decision?.authoritativeFileId).map((item) => String(item.decision.authoritativeFileId))),
@@ -111,6 +119,7 @@ export async function POST(request: Request) {
         paginationComplete: permissionInventory.paginationComplete,
         lastSuccessfulSyncAt: connector.lastSyncAt,
       },
+      coverageRows,
       rankingContext: { unresolvedConflictFileIds: unresolvedFileIds, authoritativeFileIds, conflictAssessmentComplete: true },
     }),
     resultIds = new Set(response.results.map((result) => result.id));

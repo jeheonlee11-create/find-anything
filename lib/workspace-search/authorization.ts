@@ -1,10 +1,11 @@
 import { connectorForWorkspace } from "@/lib/google-drive/repository";
 import { currentAuthorizedDriveSourceIds } from "@/lib/google-drive/permission";
+import { connectorSearchAccess } from "@/lib/google-drive/connector-health";
 import { indexedWorkspaceFiles } from "./repository";
 
 export async function currentlyAuthorizedWorkspaceFiles(workspaceId: string) {
   const connector = await connectorForWorkspace(workspaceId);
-  if (!connector || connector.status !== "connected")
+  if (!connector || !connectorSearchAccess(connector).allowed)
     throw new Error("GOOGLE_DRIVE_NOT_CONNECTED");
   const inventory = await currentAuthorizedDriveSourceIds(connector);
   return {

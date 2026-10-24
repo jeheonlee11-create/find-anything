@@ -1,7 +1,40 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { extractedUnits, sourceFiles } from "@/db/schema";
-import type { WorkspaceSearchFile } from "@/lib/workspace-search/core";
+import type { WorkspaceCoverageRow, WorkspaceSearchFile } from "@/lib/workspace-search/core";
+
+/**
+ * Status-only rows for EVERY non-trashed authorized file, including hidden
+ * (failed/unsupported) ones, so coverage can count what search cannot see.
+ * Selects no content columns: hidden files are counted, never searched.
+ */
+export async function workspaceCoverageRows(
+  workspaceId: string,
+  authorizedSourceIds?: Set<string>,
+  connectorId?: string,
+): Promise<WorkspaceCoverageRow[]> {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      id: sourceFiles.id,
+      workspaceId: sourceFiles.workspaceId,
+      sourceId: sourceFiles.sourceId,
+      indexStatus: sourceFiles.indexStatus,
+      searchableStatus: sourceFiles.searchableStatus,
+      extractionMode: sourceFiles.extractionMode,
+    })
+    .from(sourceFiles)
+    .where(
+      and(
+        eq(sourceFiles.workspaceId, workspaceId),
+        eq(sourceFiles.trashed, false),
+        ...(connectorId ? [eq(sourceFiles.connectorId, connectorId)] : []),
+      ),
+    );
+  return authorizedSourceIds
+    ? rows.filter((row) => authorizedSourceIds.has(row.sourceId))
+    : rows;
+}
 
 export async function indexedWorkspaceFiles(
   workspaceId: string,

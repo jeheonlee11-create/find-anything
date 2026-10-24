@@ -6,10 +6,11 @@ import {
   type WorkspaceFileType,
   type WorkspaceSearchMode,
 } from "@/lib/workspace-search/core";
-import { indexedWorkspaceFiles } from "@/lib/workspace-search/repository";
+import { indexedWorkspaceFiles, workspaceCoverageRows } from "@/lib/workspace-search/repository";
 import { persistSearchAudit } from "@/lib/workspace-search/audit";
 import { connectorForActor, latestSyncForConnector } from "@/lib/google-drive/repository";
 import { currentAuthorizedDriveSourceIds } from "@/lib/google-drive/permission";
+import { connectorSearchAccess, permanentConnectorFailure } from "@/lib/google-drive/connector-health";
 import { rateLimit, recordBetaEvent } from "@/lib/beta/repository";
 import { calculateRetrievalConfidence } from "@/lib/workspace-search/confidence";
 import { conflictsForFiles, unresolvedConflictCount } from "@/lib/conflicts/repository";
@@ -56,14 +57,14 @@ export async function POST(
         : "all",
       cursor = typeof body.cursor === "string" ? body.cursor : null,
       pageSize = typeof body.pageSize === "number" ? body.pageSize : 20,
-      connector = await connectorForActor(actor, workspaceId, isDemoWorkspace(workspaceId) ? "demo_fixture" : "google_drive");
-    if (!connector || connector.status !== "connected")
+      connector = await connectorForActor(actor, workspaceId, isDemoWorkspace(workspaceId) ? "demo_fixture" : "google_drive"),
+      access = connectorSearchAccess(connector);
+    if (!connector || !access.allowed)
       return NextResponse.json(
         {
-          error: {
-            code: "GOOGLE_DRIVE_NOT_CONNECTED",
-            message: "Connect Google Drive before searching this workspace.",
-          },
+          error: access.allowed
+            ? { code: "GOOGLE_DRIVE_NOT_CONNECTED", message: "Connect Google Drive before searching this workspace." }
+            : { code: access.code, message: access.message },
         },
         { status: 409 },
       );
@@ -77,6 +78,7 @@ export async function POST(
         workspaceId,
         permissionInventory.sourceIds,
       ),
+      coverageRows = await workspaceCoverageRows(workspaceId, permissionInventory.sourceIds),
       filesLoaded = Date.now(),
       detectedConflicts = await conflictsForFiles(workspaceId, files.map((file) => file.id)),
       conflictsLoaded = Date.now(),
@@ -96,6 +98,7 @@ export async function POST(
           lastSuccessfulSyncAt: connector.lastSyncAt,
           knownRemovedOrUnauthorized: demoSync?.filesRemoved ?? 0,
         },
+        coverageRows,
         rankingContext: { unresolvedConflictFileIds: unresolvedFileIds, authoritativeFileIds, conflictAssessmentComplete: true },
       }),
       resultIds = new Set(response.results.map((result) => result.id));
@@ -139,7 +142,14 @@ export async function POST(
       { headers: { "cache-control": "no-store", "x-request-id": requestId } },
     );
   } catch (error) {
-    const code = error instanceof Error ? error.message : "SEARCH_UNAVAILABLE";
+    const code = error instanceof Error ? error.message : "SEARCH_UNAVAILABLE",
+      permanent = code.startsWith("GOOGLE_") ? permanentConnectorFailure(error) : null;
+    // A revoked grant or missing scope will not heal on retry: say so plainly.
+    if (permanent)
+      return NextResponse.json(
+        { error: permanent },
+        { status: 409, headers: { "cache-control": "no-store", "x-request-id": requestId } },
+      );
     return NextResponse.json(
       {
         error: {
