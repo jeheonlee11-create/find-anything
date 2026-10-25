@@ -1,2 +1,25 @@
-import {NextResponse} from "next/server";import {demoLineage} from "@/lib/business/lineage";
-export async function GET(request:Request){const expected=process.env.DEMO_ACCESS_TOKEN;if(!expected||request.headers.get("authorization")!==`Bearer ${expected}`)return NextResponse.json({error:{code:"NOT_FOUND",message:"Not found"}},{status:404});return NextResponse.json({synthetic:true,customerData:false,workspace:{name:"Detroit Research Demo",knownFiles:105,indexedFiles:101,pendingFiles:2,failedFiles:2},queries:["Find every Google Doc related to the Detroit air-quality project.","Which document is the final version?","Show the spreadsheet cells used to create the chart on slide 12.","Which files were excluded from this search and why?","Can this result set be considered complete?","Show the conflicting PM1 values across versions."],lineage:demoLineage,metrics:"No live usage data yet."},{headers:{"cache-control":"no-store"}})}
+import { NextResponse } from "next/server";
+import { demoLineage } from "@/lib/business/lineage";
+import { bearerMatches } from "@/lib/security/constant-time";
+export async function GET(request: Request) {
+  if (!(await bearerMatches(request.headers.get("authorization"), process.env.DEMO_ACCESS_TOKEN)))
+    return NextResponse.json({ error: { code: "NOT_FOUND", message: "Not found" } }, { status: 404 });
+  return NextResponse.json(
+    {
+      synthetic: true,
+      customerData: false,
+      workspace: { name: "Detroit Research Demo", knownFiles: 105, indexedFiles: 101, pendingFiles: 2, failedFiles: 2 },
+      queries: [
+        "Find every Google Doc related to the Detroit air-quality project.",
+        "Which document is the final version?",
+        "Show the spreadsheet cells used to create the chart on slide 12.",
+        "Which files were excluded from this search and why?",
+        "Can this result set be considered complete?",
+        "Show the conflicting PM1 values across versions.",
+      ],
+      lineage: demoLineage,
+      metrics: "No live usage data yet.",
+    },
+    { headers: { "cache-control": "no-store" } },
+  );
+}
