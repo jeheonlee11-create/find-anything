@@ -183,3 +183,47 @@ export function extractedFileStatements(
   );
   return statements;
 }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- accepts the D1 driver and the sqlite-proxy test driver alike.
+export type DeletionDb = Pick<BaseSQLiteDatabase<"async", any>, "delete" | "run">;
+
+/**
+ * Every statement that deletes what one connector produced, in dependency
+ * order, for ONE `db.batch` call. D1 runs a batch as a single transaction, so
+ * a disconnect either removes all of it or none of it: a failure part-way can
+ * no longer leave, say, search receipts whose source files are already gone.
+ *
+ * Each statement is workspace- or connector-scoped and set-based, so the count
+ * is fixed (17) no matter how many files were indexed. The FTS index follows
+ * the extracted_units delete through its trigger.
+ *
+ * Deliberately kept, because they are not connector output: the workspace and
+ * its membership, developer API keys, submitted feedback, and aggregate
+ * analytics counters.
+ */
+export function connectorDeletionStatements(db: DeletionDb, connectorId: string, workspaceId: string): SqliteStatement[] {
+  return [
+    // Content and content-derived records.
+    db.run(sql`delete from unit_embeddings where workspace_id = ${workspaceId}`),
+    db.delete(extractedUnits).where(eq(extractedUnits.workspaceId, workspaceId)),
+    db.run(sql`delete from file_versions where file_id in (select id from source_files where connector_id = ${connectorId})`),
+    db.run(sql`delete from file_relationships where workspace_id = ${workspaceId}`),
+    db.run(sql`delete from retrieval_conflicts where workspace_id = ${workspaceId}`),
+    // Retrieval records store query text, citations, and result snapshots.
+    db.run(sql`delete from search_receipts where workspace_id = ${workspaceId}`),
+    db.run(sql`delete from retrieval_traces where workspace_id = ${workspaceId}`),
+    // Indexing history, including sanitized file names on failure rows.
+    db.run(sql`delete from indexing_continuations where job_id in (select id from indexing_jobs where connector_id = ${connectorId})`),
+    db.run(sql`delete from indexing_job_attempts where job_id in (select id from indexing_jobs where connector_id = ${connectorId})`),
+    db.run(sql`delete from indexing_failures where connector_id = ${connectorId}`),
+    db.run(sql`delete from coverage_receipts where connector_id = ${connectorId}`),
+    db.run(sql`delete from indexing_jobs where connector_id = ${connectorId}`),
+    // File inventory, run history, pending authorization state, and last the
+    // encrypted credentials themselves.
+    db.run(sql`delete from source_files where connector_id = ${connectorId}`),
+    db.run(sql`delete from sync_runs where connector_id = ${connectorId}`),
+    db.run(sql`delete from oauth_states where workspace_id = ${workspaceId}`),
+    db.run(sql`delete from oauth_refresh_leases where connector_id = ${connectorId}`),
+    db.run(sql`delete from connectors where id = ${connectorId}`),
+  ];
+}

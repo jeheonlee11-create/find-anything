@@ -560,7 +560,10 @@ test("settings states plainly what disconnecting deletes and does not invent cap
       deleteHandler.indexOf("deleteConnectorData"),
     "revocation must precede deletion",
   );
-  // Everything the UI claims is deleted is actually deleted.
+  // Everything the UI claims is deleted is actually deleted (executed against
+  // SQLite in tests/connector-deletion.test.mjs).
+  const deletions = await source("lib/google-drive/statement-builders.ts");
+  assert.match(repository, /connectorDeletionStatements/);
   for (const table of [
     "unit_embeddings",
     "file_versions",
@@ -574,11 +577,9 @@ test("settings states plainly what disconnecting deletes and does not invent cap
     "coverage_receipts",
     "indexing_jobs",
   ])
-    assert.match(repository, new RegExp(`delete from ${table}`), table);
-  assert.match(repository, /delete\(extractedUnits\)/);
-  assert.match(repository, /delete\(sourceFiles\)/);
-  assert.match(repository, /delete\(oauthStates\)/);
-  assert.match(repository, /delete\(connectors\)/);
+    assert.match(deletions, new RegExp(`delete from ${table}`), table);
+  assert.match(deletions, /delete\(extractedUnits\)/);
+  for (const table of ["source_files", "oauth_states", "connectors"]) assert.match(deletions, new RegExp(`delete from ${table}`), table);
   // And the UI is honest about what is kept and what is not self-service.
   assert.match(panel, /Retrieval traces and search receipts/);
   assert.match(panel, /Developer API keys/);
