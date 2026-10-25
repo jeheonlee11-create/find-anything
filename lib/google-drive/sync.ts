@@ -32,7 +32,7 @@ import {
   isUsableConnectorStatus,
 } from "./connector-health";
 import {
-  driveFileBytes,
+  extractionWeight,
   isExtractableDriveMimeType,
   isOversizedForExtraction,
   MAX_FILE_RETRIES,
@@ -738,6 +738,20 @@ export async function synchronizeGoogleDrive(
           : { outcome: "unsupported" as const, hadContent, unitCount: 0 };
       } catch (error) {
         const errorCode = safeErrorCode(error);
+        // A native export or download that passed its byte cap will be just
+        // as large on retry: settle it like a file whose size was known.
+        if (errorCode === OVERSIZED_FILE_ERROR_CODE) {
+          await markFileFailed({
+            connectorId: connector.id,
+            workspaceId: connector.workspaceId,
+            file,
+            errorCode,
+            extractionMode: "skipped_too_large",
+            terminal: true,
+            budget,
+          });
+          return { outcome: "oversized" as const, hadContent, unitCount: 0 };
+        }
         await markFileFailed({
           connectorId: connector.id,
           workspaceId: connector.workspaceId,
@@ -769,6 +783,10 @@ export async function synchronizeGoogleDrive(
               previousBySourceId.get(file.id)?.retryCount ?? 0,
           });
         }
+      } else if (result.outcome === "oversized") {
+        oversized += 1;
+        filesUnsupported += 1;
+        if (pass === "retry") failed = Math.max(0, failed - 1);
       } else if (result.outcome === "unsupported") {
         filesUnsupported += 1;
         if (pass === "retry") failed = Math.max(0, failed - 1);
@@ -804,7 +822,7 @@ export async function synchronizeGoogleDrive(
       max: EXTRACTION_POOL_MAX,
       // Admission is bounded by aggregate in-flight export bytes as well as by
       // slots, so a window of large PDFs cannot OOM the 128 MB isolate.
-      weightOf: (file: DriveFileMetadata) => driveFileBytes(file),
+      weightOf: (file: DriveFileMetadata) => extractionWeight(file),
       maxInFlightWeight: MAX_IN_FLIGHT_EXTRACTION_BYTES,
       shouldStop: () =>
         Date.now() >= processingDeadline || !budget.canSpend(SUBREQUESTS_PER_FILE),

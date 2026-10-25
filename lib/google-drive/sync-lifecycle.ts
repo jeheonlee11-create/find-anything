@@ -203,9 +203,25 @@ export const MAX_IN_FLIGHT_EXTRACTION_BYTES = 32 * 1024 * 1024;
 export const MAX_EXTRACTABLE_FILE_BYTES = 24 * 1024 * 1024;
 export const OVERSIZED_FILE_ERROR_CODE = "FILE_TOO_LARGE_TO_EXTRACT";
 
+/**
+ * Google-native Docs, Slides, and Sheets report no `size`: their bytes only
+ * exist once exported. Their reads are capped at MAX_NATIVE_EXPORT_BYTES (see
+ * readBoundedBody in client.ts), so that cap is their honest worst case for
+ * memory admission. Counting them as 0 bytes let 20 large native exports into
+ * the pool at once.
+ */
+export const MAX_NATIVE_EXPORT_BYTES = 4 * 1024 * 1024;
+
 export function driveFileBytes(file: { size?: string }) {
   const bytes = Number(file.size ?? 0);
   return Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+}
+
+/** Bytes to reserve in the extraction pool for one file. */
+export function extractionWeight(file: { size?: string; mimeType?: string }) {
+  const bytes = driveFileBytes(file);
+  if (bytes > 0) return bytes;
+  return file.mimeType?.startsWith("application/vnd.google-apps.") ? MAX_NATIVE_EXPORT_BYTES : 0;
 }
 
 export function isOversizedForExtraction(

@@ -1,3 +1,9 @@
+import {
+  MAX_EXTRACTABLE_FILE_BYTES,
+  MAX_NATIVE_EXPORT_BYTES,
+  OVERSIZED_FILE_ERROR_CODE,
+} from "./sync-lifecycle.ts";
+
 export interface DriveFileMetadata {
   id: string;
   name: string;
@@ -48,6 +54,50 @@ async function googleFetch(url: string, accessToken: string) {
   }
   return response;
 }
+
+/**
+ * Reads a response body but stops as soon as it passes `maxBytes`: first by
+ * Content-Length when Google sends one, then while streaming. Native exports
+ * have no size in Drive metadata, so without this a huge Sheet or Doc was read
+ * whole into a 128 MB isolate.
+ */
+export async function readBoundedBody(response: Response, maxBytes: number): Promise<ArrayBuffer> {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel();
+    throw new Error(OVERSIZED_FILE_ERROR_CODE);
+  }
+  if (!response.body) return new ArrayBuffer(0);
+  const reader = response.body.getReader(),
+    chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error(OVERSIZED_FILE_ERROR_CODE);
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body.buffer;
+}
+
+
+/**
+ * Sheets grid data, reduced to what extraction reads: sheet titles and each
+ * cell's formatted value. Without a field mask, includeGridData returns every
+ * cell's formatting as well, several times the size of the values.
+ */
+export const SHEETS_GRID_FIELDS = "sheets(properties(title),data(rowData(values(formattedValue))))";
+
 export interface DriveInventoryProgress {
   filesDiscovered: number;
   nextPageToken: string | null;
@@ -140,18 +190,14 @@ export async function exportGoogleFile(
     const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}/export?mimeType=${encodeURIComponent(mime)}`;
     return {
       kind: file.mimeType.includes("spreadsheet") ? "csv" : "text",
-      data: await googleFetch(url, accessToken).then((response) =>
-        response.arrayBuffer(),
-      ),
+      data: await readBoundedBody(await googleFetch(url, accessToken), MAX_NATIVE_EXPORT_BYTES),
     } as const;
   }
   if (file.mimeType === "application/pdf") {
     const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`;
     return {
       kind: "pdf",
-      data: await googleFetch(url, accessToken).then((response) =>
-        response.arrayBuffer(),
-      ),
+      data: await readBoundedBody(await googleFetch(url, accessToken), MAX_EXTRACTABLE_FILE_BYTES),
     } as const;
   }
   return null;
@@ -169,15 +215,16 @@ export async function fetchStructuredGoogleFile(
     url = `https://slides.googleapis.com/v1/presentations/${encodeURIComponent(file.id)}`;
     source = "slides";
   } else if (file.mimeType === "application/vnd.google-apps.spreadsheet") {
-    url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(file.id)}?includeGridData=true`;
+    url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(file.id)}?includeGridData=true&fields=${encodeURIComponent(SHEETS_GRID_FIELDS)}`;
     source = "sheets";
   }
   if (!url || !source) return null;
+  // Over the cap, this throws and the caller falls back to the plain export,
+  // which has the same cap.
+  const body = await readBoundedBody(await googleFetch(url, accessToken), MAX_NATIVE_EXPORT_BYTES);
   return {
     kind: "structured" as const,
     source,
-    data: await googleFetch(url, accessToken).then((response) =>
-      response.json(),
-    ),
+    data: JSON.parse(new TextDecoder().decode(body)) as unknown,
   };
 }
