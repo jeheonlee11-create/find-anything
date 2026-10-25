@@ -14,7 +14,7 @@ import {
   operationRateLimits,
 } from "@/db/schema";
 import type { AuthenticatedActor } from "@/lib/auth/api-authorization";
-import { decryptSecret, encryptSecret } from "@/lib/google-drive/crypto";
+import { decryptSecret, encryptSecret, secretContext } from "@/lib/google-drive/crypto";
 
 async function digest(value: string) {
   const bytes = new Uint8Array(
@@ -133,7 +133,7 @@ export async function saveBetaAccessRequest(input: {
   const db = await getDb(), now = new Date().toISOString(), hash = await emailHash(input.email);
   const existing = await db.select({ id: betaAccessRequests.id }).from(betaAccessRequests).where(eq(betaAccessRequests.emailHash, hash)).get();
   const values = {
-    emailCiphertext: await encryptSecret(input.email.trim().toLowerCase()),
+    emailCiphertext: await encryptSecret(input.email.trim().toLowerCase(), secretContext.betaRequestEmail(hash)),
     fullName: input.fullName.trim(),
     company: input.company.trim(),
     jobTitle: input.jobTitle.trim(),
@@ -313,7 +313,7 @@ export async function betaAdminData() {
     users,
     accessRequests: await Promise.all(accessRequests.map(async (row) => ({
       id: row.id,
-      email: await decryptSecret(row.emailCiphertext).catch(() => "Unavailable"),
+      email: await decryptSecret(row.emailCiphertext, secretContext.betaRequestEmail(row.emailHash)).catch(() => "Unavailable"),
       fullName: row.fullName,
       company: row.company,
       jobTitle: row.jobTitle,

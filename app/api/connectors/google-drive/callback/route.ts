@@ -3,6 +3,7 @@ import { getAuthenticatedActor } from "@/lib/auth/api-authorization";
 import {
   decryptSecret,
   encryptSecret,
+  secretContext,
   sha256,
 } from "@/lib/google-drive/crypto";
 import {
@@ -42,7 +43,8 @@ export async function GET(request: Request) {
       },
       { status: 400 },
     );
-  const record = await consumeOAuthState(await sha256(state));
+  const stateHash = await sha256(state),
+    record = await consumeOAuthState(stateHash);
   if (
     !record ||
     record.actorId !== actor.actorId ||
@@ -60,7 +62,7 @@ export async function GET(request: Request) {
   try {
     const tokens = await exchangeAuthorizationCode(
         code,
-        await decryptSecret(record.pkceVerifierCiphertext),
+        await decryptSecret(record.pkceVerifierCiphertext, secretContext.oauthPkceVerifier(stateHash)),
       ),
       now = new Date().toISOString();
     if (!new Set(tokens.scope.split(/\s+/)).has(DRIVE_SCOPE))
@@ -72,9 +74,9 @@ export async function GET(request: Request) {
       provider: "google_drive",
       providerAccountId: actor.actorId,
       status: "connected",
-      accessTokenCiphertext: await encryptSecret(tokens.access_token),
+      accessTokenCiphertext: await encryptSecret(tokens.access_token, secretContext.connectorAccessToken(record.workspaceId)),
       refreshTokenCiphertext: tokens.refresh_token
-        ? await encryptSecret(tokens.refresh_token)
+        ? await encryptSecret(tokens.refresh_token, secretContext.connectorRefreshToken(record.workspaceId))
         : null,
       tokenExpiresAt: new Date(
         Date.now() + tokens.expires_in * 1000,

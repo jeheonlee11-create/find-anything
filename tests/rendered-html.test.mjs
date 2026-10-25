@@ -153,7 +153,7 @@ test("Week 1 workspace isolation, expiry refresh, callback state, and revocation
     callback,
     /Date\.parse\(record\.expiresAt\)\s*<=\s*Date\.now\(\)/,
   );
-  assert.match(disconnect, /workspace\.role!=="owner"/);
+  assert.match(disconnect, /workspace\.role\s*!==\s*"owner"/);
   assert.match(disconnect, /revokeGoogleToken/);
   assert.match(disconnect, /deleteConnectorData/);
   assert.match(scope, /Not in MVP/);
@@ -167,7 +167,7 @@ test("Google Drive implementation includes state, PKCE, encrypted tokens, comple
         "utf8",
       ),
       readFile(
-        new URL("../lib/google-drive/crypto.ts", import.meta.url),
+        new URL("../lib/security/secret-box.ts", import.meta.url),
         "utf8",
       ),
       readFile(
@@ -183,7 +183,7 @@ test("Google Drive implementation includes state, PKCE, encrypted tokens, comple
         "utf8",
       ),
     ]);
-  assert.match(oauth, /code_challenge_method:"S256"/);
+  assert.match(oauth, /code_challenge_method:\s*"S256"/);
   assert.match(oauth, /drive\.file/);
   assert.match(cryptoSource, /AES-GCM/);
   assert.match(client, /while\s*\(pageToken\)/);

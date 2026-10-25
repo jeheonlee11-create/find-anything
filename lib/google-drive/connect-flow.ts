@@ -7,7 +7,7 @@
  * rest. Neither the state nor the verifier is ever returned to the browser.
  */
 import type { AuthenticatedActor } from "@/lib/auth/api-authorization";
-import { encryptSecret, sha256 } from "@/lib/google-drive/crypto";
+import { encryptSecret, secretContext, sha256 } from "@/lib/google-drive/crypto";
 import { createAuthorizationRequest } from "@/lib/google-drive/oauth";
 import { saveOAuthState } from "@/lib/google-drive/repository";
 import { actorWorkspace } from "@/lib/workspaces/repository";
@@ -24,12 +24,13 @@ export async function beginGoogleDriveAuthorization(
   workspaceId: string,
 ): Promise<string | null> {
   if (!(await actorWorkspace(actor.actorId, workspaceId))) return null;
-  const authorization = await createAuthorizationRequest();
+  const authorization = await createAuthorizationRequest(),
+    stateHash = await sha256(authorization.state);
   await saveOAuthState({
-    stateHash: await sha256(authorization.state),
+    stateHash,
     actorId: actor.actorId,
     workspaceId,
-    pkceVerifierCiphertext: await encryptSecret(authorization.verifier),
+    pkceVerifierCiphertext: await encryptSecret(authorization.verifier, secretContext.oauthPkceVerifier(stateHash)),
     expiresAt: new Date(Date.now() + STATE_LIFETIME_MS).toISOString(),
   });
   return authorization.url;

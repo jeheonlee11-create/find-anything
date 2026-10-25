@@ -176,7 +176,7 @@ test("the Drive connect API rejects an authenticated but unapproved actor", asyn
   const flow = await source("lib/google-drive/connect-flow.ts");
   assert.match(flow, /actorWorkspace\(actor\.actorId, workspaceId\)/);
   assert.match(flow, /sha256\(authorization\.state\)/);
-  assert.match(flow, /encryptSecret\(authorization\.verifier\)/);
+  assert.match(flow, /encryptSecret\(authorization\.verifier, secretContext\.oauthPkceVerifier\(stateHash\)\)/);
 });
 
 test("the connect journey is one ordered decision, removable in one place", async () => {
@@ -512,10 +512,10 @@ test("the public origin is centralized and the OAuth redirect derives from it", 
   const oauth = await source("lib/google-drive/oauth.ts");
   assert.match(
     oauth,
-    /DRIVE_SCOPE="https:\/\/www\.googleapis\.com\/auth\/drive\.file"/,
+    /DRIVE_SCOPE\s*=\s*"https:\/\/www\.googleapis\.com\/auth\/drive\.file"/,
   );
   assert.equal((oauth.match(/googleapis\.com\/auth\//g) ?? []).length, 1);
-  assert.match(oauth, /scope:DRIVE_SCOPE/);
+  assert.match(oauth, /scope:\s*DRIVE_SCOPE/);
 
   // No customer-facing copy still points at a separate app or api hostname.
   for (const path of ["app/mcp/page.tsx", "app/docs/page.tsx"]) {

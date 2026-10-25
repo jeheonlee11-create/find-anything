@@ -1,4 +1,4 @@
-import { decryptSecret, encryptSecret } from "./crypto";
+import { decryptSecret, encryptSecret, isLegacySealed, secretContext } from "./crypto";
 import {
   exportGoogleFile,
   fetchStructuredGoogleFile,
@@ -106,7 +106,7 @@ export async function usableAccessToken(connector: StoredConnector) {
     connector.tokenExpiresAt &&
     Date.parse(connector.tokenExpiresAt) > Date.now() + 60_000
   )
-    return decryptSecret(connector.accessTokenCiphertext);
+    return decryptSecret(connector.accessTokenCiphertext, secretContext.connectorAccessToken(connector.workspaceId));
   const active = refreshesInFlight.get(connector.id);
   if (active) return active;
   const refresh = refreshConnectorAccessToken(connector).finally(() =>
@@ -126,10 +126,10 @@ async function refreshConnectorAccessToken(connector: StoredConnector) {
     throw new Error("GOOGLE_REFRESH_TOKEN_MISSING");
   }
   const leaseOwner = await acquireTokenRefreshLease(connector.id);
-  if (!leaseOwner) return waitForConcurrentRefresh(connector.id);
+  if (!leaseOwner) return waitForConcurrentRefresh(connector.id, connector.workspaceId);
   await setConnectorStatus(connector.id, "token_refreshing");
   try {
-    const refreshToken = await decryptSecret(connector.refreshTokenCiphertext),
+    const refreshToken = await decryptSecret(connector.refreshTokenCiphertext, secretContext.connectorRefreshToken(connector.workspaceId)),
       tokens = await refreshAccessToken(refreshToken);
     if (!hasAcceptedDriveScope(tokens.scope))
       throw new Error("GOOGLE_REQUIRED_SCOPE_MISSING");
@@ -137,10 +137,14 @@ async function refreshConnectorAccessToken(connector: StoredConnector) {
         Date.now() + tokens.expires_in * 1000,
       ).toISOString();
     await updateConnectorTokens(connector.id, {
-      accessTokenCiphertext: await encryptSecret(tokens.access_token),
+      accessTokenCiphertext: await encryptSecret(tokens.access_token, secretContext.connectorAccessToken(connector.workspaceId)),
+      // A rotated refresh token is sealed fresh; an unrotated legacy (v1)
+      // value is re-sealed as v2 so old rows migrate on their next refresh.
       refreshTokenCiphertext: tokens.refresh_token
-        ? await encryptSecret(tokens.refresh_token)
-        : undefined,
+        ? await encryptSecret(tokens.refresh_token, secretContext.connectorRefreshToken(connector.workspaceId))
+        : isLegacySealed(connector.refreshTokenCiphertext)
+          ? await encryptSecret(refreshToken, secretContext.connectorRefreshToken(connector.workspaceId))
+          : undefined,
       tokenExpiresAt,
     });
     await setConnectorStatus(connector.id, "connected", null, false);
@@ -166,7 +170,7 @@ async function refreshConnectorAccessToken(connector: StoredConnector) {
  * far longer than the refresh itself ever took. Poll faster and give up
  * sooner instead of hanging.
  */
-async function waitForConcurrentRefresh(connectorId: string) {
+async function waitForConcurrentRefresh(connectorId: string, workspaceId: string) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 100));
     const current = await refreshedConnectorToken(connectorId);
@@ -180,7 +184,7 @@ async function waitForConcurrentRefresh(connectorId: string) {
       current.tokenExpiresAt &&
       Date.parse(current.tokenExpiresAt) > Date.now() + 60_000
     )
-      return decryptSecret(current.accessTokenCiphertext);
+      return decryptSecret(current.accessTokenCiphertext, secretContext.connectorAccessToken(workspaceId));
   }
   throw new Error("GOOGLE_TOKEN_REFRESH_TIMEOUT");
 }
