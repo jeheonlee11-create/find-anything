@@ -105,17 +105,35 @@ export interface WorkspaceSearchResponse {
       combined: number;
     };
     duplicatesRemoved: number;
+    /**
+     * Counts for every stored file the permission check evaluated. `denied`
+     * rows (stored, but missing from the current authorized inventory) are
+     * counted, never identified: a trace must not reveal files the caller can
+     * no longer see.
+     */
+    permissionSummary: {
+      method: "drive_inventory" | "demo_fixture" | "supplied";
+      evaluated: number;
+      allowed: number;
+      denied: number;
+    };
+    /** The allow decision behind each returned result (bounded by page size). */
     permissionDecisions: Array<{
       fileId: string;
       decision: "allowed";
       reason: string;
     }>;
+    /** Counts for every searchable file the matcher evaluated. */
+    thresholdSummary: { evaluated: number; included: number; excluded: number };
+    /** The match decision behind each returned result (bounded by page size). */
     thresholdDecisions: Array<{
       fileId: string;
       decision: "included" | "excluded";
       reason: string;
     }>;
+    /** At most MAX_RECORDED_DECISIONS excluded files; the total is in thresholdSummary. */
     excludedResults: Array<{ fileId: string; reason: string }>;
+    /** Version and evidence hashes of the returned results. */
     indexSnapshot: Array<{
       fileId: string;
       modifiedAt: string;
@@ -150,6 +168,11 @@ export interface WorkspaceSearchResponse {
 }
 /** v4: whole-word term matching (v3 matched substrings, so "cat" hit "category"). */
 export const MATCHING_POLICY_VERSION = "literal-and-v4";
+/**
+ * Per-file decision lists are capped so a search trace stays a small D1 row
+ * on any workspace size; the summaries above them keep the full counts.
+ */
+export const MAX_RECORDED_DECISIONS = 100;
 
 const MIME_BY_TYPE: Record<Exclude<WorkspaceFileType, "all">, string> = {
   docs: "application/vnd.google-apps.document",
@@ -206,6 +229,10 @@ export function searchWorkspaceFiles(input: {
     paginationComplete: boolean;
     lastSuccessfulSyncAt: string | null;
     knownRemovedOrUnauthorized?: number;
+    /** How `files` was authorized, for the recorded decision reasons. */
+    method?: "drive_inventory" | "demo_fixture";
+    /** Stored rows the permission check removed before search. Counted only. */
+    deniedStoredFiles?: number;
   };
   /**
    * Every authorized stored file, including hidden failed/unsupported ones,
@@ -221,6 +248,7 @@ export function searchWorkspaceFiles(input: {
   const workspaceFiles = input.files.filter(
     (file) => file.workspaceId === input.workspaceId,
   );
+  const foreignFiles = input.files.length - workspaceFiles.length;
   const eligible = workspaceFiles.filter((file) =>
     input.fileType === "all"
       ? true
@@ -251,32 +279,29 @@ export function searchWorkspaceFiles(input: {
   const coverageRows = new Map<string, CoverageInventoryRow>(
     workspaceFiles.map((file) => [file.id, { indexStatus: file.indexStatus, searchableStatus: "searchable", extractionMode: file.extractionMode }]),
   );
-  const coverageOnlyIds: string[] = [];
   for (const row of input.coverageRows ?? [])
-    if (row.workspaceId === input.workspaceId && !coverageRows.has(row.id)) {
-      coverageRows.set(row.id, row);
-      coverageOnlyIds.push(row.id);
-    }
+    if (row.workspaceId === input.workspaceId && !coverageRows.has(row.id)) coverageRows.set(row.id, row);
   const paginationComplete = input.permissionContext?.paginationComplete ?? true;
   const inventory = summarizeCoverageInventory([...coverageRows.values()], { paginationComplete });
-  const permissionDecisions = [
-    ...workspaceFiles.map((file) => ({
-      fileId: file.id,
-      decision: "allowed" as const,
-      reason: "workspace membership and file workspace matched",
-    })),
-    ...coverageOnlyIds.map((fileId) => ({
-      fileId,
-      decision: "allowed" as const,
-      reason: "authorized, but not searchable because its content was not indexed",
-    })),
-  ];
-  const thresholdDecisions: Array<{
-    fileId: string;
-    decision: "included" | "excluded";
-    reason: string;
-  }> = [];
+  const permissionMethod = input.permissionContext?.method ?? "supplied",
+    permissionReason =
+      permissionMethod === "drive_inventory"
+        ? "in the Drive inventory Google returned for the connected account at query time"
+        : permissionMethod === "demo_fixture"
+          ? "assigned to the authorized synthetic demo workspace"
+          : "in the authorized file set supplied to search",
+    deniedCount = (input.permissionContext?.deniedStoredFiles ?? 0) + foreignFiles,
+    permissionSummary = {
+      method: permissionMethod,
+      evaluated: coverageRows.size + deniedCount,
+      allowed: coverageRows.size,
+      denied: deniedCount,
+    } as const;
+  const thresholdDecisions = new Map<string, { fileId: string; decision: "included" | "excluded"; reason: string }>();
   const excludedResults: Array<{ fileId: string; reason: string }> = [];
+  const excludeForMatching = (fileId: string) => {
+    if (excludedResults.length < MAX_RECORDED_DECISIONS) excludedResults.push({ fileId, reason: "matching policy" });
+  };
 
   const phrase = collapseWhitespace(normalizeText(query));
   const matches = searchableEligible.flatMap((file) => {
@@ -299,29 +324,29 @@ export function searchWorkspaceFiles(input: {
     if (titleHit || mimeHit || contentHit) candidateCounts.keyword += 1;
     const literalMatch = terms.every((_, index) => termInName[index] || termInMime[index] || termInContent[index]);
     if (!literalMatch) {
-      thresholdDecisions.push({
+      thresholdDecisions.set(file.id, {
         fileId: file.id,
         decision: "excluded",
         reason: nameOnly
           ? "content is not indexed yet and not every query term matched the file name or type"
           : "not every query term matched indexed text or metadata as a whole word",
       });
-      excludedResults.push({ fileId: file.id, reason: "matching policy" });
+      excludeForMatching(file.id);
       return [];
     }
     // A name-only row with no query terms is not a claim of anything: an empty
     // query must not surface files whose content has never been read.
     if (nameOnly && !terms.length) {
-      thresholdDecisions.push({
+      thresholdDecisions.set(file.id, {
         fileId: file.id,
         decision: "excluded",
         reason: "content is not indexed yet and no query terms were supplied",
       });
-      excludedResults.push({ fileId: file.id, reason: "matching policy" });
+      excludeForMatching(file.id);
       return [];
     }
     candidateCounts.combined += 1;
-    thresholdDecisions.push({
+    thresholdDecisions.set(file.id, {
       fileId: file.id,
       decision: "included",
       reason: nameOnly
@@ -470,14 +495,20 @@ export function searchWorkspaceFiles(input: {
       normalizedQuery: normalizeText(query),
       candidateCounts,
       duplicatesRemoved: 0,
-      permissionDecisions,
-      thresholdDecisions,
+      permissionSummary,
+      permissionDecisions: results.map((result) => ({ fileId: result.id, decision: "allowed" as const, reason: permissionReason })),
+      thresholdSummary: {
+        evaluated: thresholdDecisions.size,
+        included: matches.length,
+        excluded: thresholdDecisions.size - matches.length,
+      },
+      thresholdDecisions: results.flatMap((result) => thresholdDecisions.get(result.id) ?? []),
       excludedResults,
-      indexSnapshot: workspaceFiles
-        .map((file) => ({
-          fileId: file.id,
-          modifiedAt: file.modifiedAt,
-          unitHashes: file.units.map((unit) => unit.contentHash),
+      indexSnapshot: results
+        .map((result) => ({
+          fileId: result.id,
+          modifiedAt: result.modifiedAt,
+          unitHashes: result.citations.map((citation) => citation.contentHash),
         }))
         .sort((a, b) => a.fileId.localeCompare(b.fileId)),
       stages: [
@@ -517,7 +548,7 @@ export function searchWorkspaceFiles(input: {
   response.confidence = calculateRetrievalConfidence({
     coverage,
     results,
-    permissionDecisionCount: permissionDecisions.length,
+    permissionDecisionCount: permissionSummary.evaluated,
     connector: { searched: 1, expectedConfigured: 1 },
     unresolvedConflictCount: null,
     conflictAssessmentComplete: false,

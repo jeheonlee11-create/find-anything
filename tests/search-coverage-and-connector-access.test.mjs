@@ -44,7 +44,7 @@ test("search coverage counts hidden failed and unsupported files and is not comp
   // Hidden rows are authorization-checked for the denominator but never searched.
   assert.deepEqual(result.results.map((item) => item.id).sort(), ["ok", "ok2"]);
   assert.ok(result.results.every((item) => item.citations.every((citation) => citation.fileId !== "broken" && citation.fileId !== "video")));
-  assert.ok(result.diagnostics.permissionDecisions.length >= result.coverage.totalKnownFiles);
+  assert.ok(result.diagnostics.permissionSummary.evaluated >= result.coverage.totalKnownFiles);
 });
 
 test("search coverage is complete only when every authorized file is indexed", () => {

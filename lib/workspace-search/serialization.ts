@@ -55,6 +55,7 @@ export function publicTrace(row: Trace) {
     permissionDecisions: JSON.parse(row.permissionDecisionsJson),
     thresholdDecisions: JSON.parse(row.thresholdDecisionsJson),
     excludedResults: JSON.parse(row.excludedResultsJson),
+    decisionSummary: row.decisionSummaryJson ? JSON.parse(row.decisionSummaryJson) : null,
     finalResultCount: row.finalResultCount,
     latencyByStage: JSON.parse(row.latencyJson),
     coverage: JSON.parse(row.coverageJson),

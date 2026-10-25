@@ -49,7 +49,7 @@ export async function runWorkspaceSearch(input: {
 
   const db = await getDb(),
     inventory = await workspaceInventory(db, input.workspaceId),
-    { allowed } = partitionByPermission(inventory, permissionInventory.sourceIds),
+    { allowed, denied } = partitionByPermission(inventory, permissionInventory.sourceIds),
     searchable = allowed.filter((row) => row.searchableStatus === "searchable"),
     candidates = await loadSearchCandidates(db, { workspaceId: input.workspaceId, files: searchable, terms: queryTerms(input.query) });
   const filesDone = clock();
@@ -76,6 +76,8 @@ export async function runWorkspaceSearch(input: {
       paginationComplete: permissionInventory.paginationComplete,
       lastSuccessfulSyncAt: input.connector.lastSyncAt,
       knownRemovedOrUnauthorized: demoSync?.filesRemoved ?? 0,
+      method: input.demo ? "demo_fixture" : "drive_inventory",
+      deniedStoredFiles: denied.length,
     },
     coverageRows: allowed,
     rankingContext: { unresolvedConflictFileIds: unresolvedFileIds, authoritativeFileIds, conflictAssessmentComplete: true },
@@ -87,7 +89,7 @@ export async function runWorkspaceSearch(input: {
   response.confidence = calculateRetrievalConfidence({
     coverage: response.coverage,
     results: response.results,
-    permissionDecisionCount: response.diagnostics.permissionDecisions.length,
+    permissionDecisionCount: response.diagnostics.permissionSummary.evaluated,
     connector: { searched: 1, expectedConfigured: 1 },
     unresolvedConflictCount: unresolvedConflictCount(response.conflicts),
     conflictAssessmentComplete: true,

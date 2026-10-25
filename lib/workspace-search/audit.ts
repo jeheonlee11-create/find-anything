@@ -82,6 +82,18 @@ export async function persistSearchAudit(input: {
     excludedResultsJson: JSON.stringify(
       input.response.diagnostics.excludedResults,
     ),
+    // The decision lists are bounded (results on this page, at most
+    // MAX_RECORDED_DECISIONS exclusions), so a trace stays one small D1 row on
+    // any workspace size. The full counts live here.
+    decisionSummaryJson: JSON.stringify({
+      permission: input.response.diagnostics.permissionSummary,
+      threshold: input.response.diagnostics.thresholdSummary,
+      recorded: {
+        permissionDecisions: input.response.diagnostics.permissionDecisions.length,
+        thresholdDecisions: input.response.diagnostics.thresholdDecisions.length,
+        excludedResults: input.response.diagnostics.excludedResults.length,
+      },
+    }),
     finalResultCount: input.response.results.length,
     latencyJson: JSON.stringify({
       ...input.stageLatency,

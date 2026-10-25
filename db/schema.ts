@@ -231,6 +231,8 @@ export const retrievalTraces = sqliteTable(
     permissionDecisionsJson: text("permission_decisions_json").notNull(),
     thresholdDecisionsJson: text("threshold_decisions_json").notNull(),
     excludedResultsJson: text("excluded_results_json").notNull(),
+    /** Full permission and match counts; the *_decisions_json lists above are bounded. Null on older traces. */
+    decisionSummaryJson: text("decision_summary_json"),
     finalResultCount: integer("final_result_count").notNull(),
     latencyJson: text("latency_json").notNull(),
     coverageJson: text("coverage_json").notNull(),

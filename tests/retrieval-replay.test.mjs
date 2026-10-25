@@ -5,11 +5,11 @@ import { buildRetrievalReplay, failedReplayEvent, TRACE_EVENT_SCHEMA_VERSION } f
 import { searchWorkspaceFiles } from "../lib/workspace-search/core.ts";
 
 function file(id, name, content, overrides = {}) {
-  return { id, connectorId: "connector-a", sourceId: id, name, mimeType: "application/vnd.google-apps.document", webViewLink: `https://docs.google.com/document/d/${id}`, modifiedAt: "2026-07-01T00:00:00.000Z", indexStatus: "indexed", extractionMethod: "structured", units: [{ id: `${id}-u`, unitType: "paragraph", unitIndex: 0, text: content, contentHash: `hash-${id}`, structuralLocation: "Paragraph 1" }], ...overrides };
+  return { id, workspaceId: "ws-a", connectorId: "connector-a", sourceId: id, name, mimeType: "application/vnd.google-apps.document", webViewLink: `https://docs.google.com/document/d/${id}`, modifiedAt: "2026-07-01T00:00:00.000Z", indexStatus: "indexed", extractionMethod: "structured", units: [{ id: `${id}-u`, unitType: "paragraph", unitIndex: 0, text: content, contentHash: `hash-${id}`, structuralLocation: "Paragraph 1" }], ...overrides };
 }
 function response(options = {}) {
   const files = options.files ?? [file("a", "Launch plan", "approved launch plan")];
-  const value = searchWorkspaceFiles({ workspaceId: "ws-a", files, query: options.query ?? "launch", mode: options.mode ?? "best", fileType: "all", permissionContext: { authorizedFilesDiscovered: options.discovered ?? files.length, paginationComplete: options.paginationComplete ?? true, lastSuccessfulSyncAt: options.lastSyncAt ?? "2026-07-01T00:00:00.000Z" } });
+  const value = searchWorkspaceFiles({ workspaceId: "ws-a", files, query: options.query ?? "launch", mode: options.mode ?? "best", fileType: "all", permissionContext: { authorizedFilesDiscovered: options.discovered ?? files.length, paginationComplete: options.paginationComplete ?? true, lastSuccessfulSyncAt: options.lastSyncAt ?? "2026-07-01T00:00:00.000Z", method: "drive_inventory", deniedStoredFiles: options.denied ?? 0 } });
   value.conflicts = options.conflicts ?? [];
   return value;
 }
@@ -29,10 +29,12 @@ test("zero-result and Find All replay report observed behavior", () => {
   assert.ok(all.find((item) => item.stage === "ranking").reasonCodes.includes("FIND_ALL_STABLE_ORDER"));
 });
 test("partial coverage, stale state, and permission filtering expose counts without source identities", () => {
-  const events = replay(response({ discovered: 4, paginationComplete: false, lastSyncAt: "2020-01-01T00:00:00.000Z" }));
+  // One stored file is still authorized; four stored files are no longer in the Drive inventory.
+  const events = replay(response({ discovered: 4, denied: 4, paginationComplete: false, lastSyncAt: "2020-01-01T00:00:00.000Z" }));
   const permission = events.find((item) => item.stage === "permission_filtering"), coverage = events.find((item) => item.stage === "coverage_evaluation");
+  assert.equal(permission.inputCount, 5);
   assert.equal(permission.excludedCount, 4);
-  assert.equal(permission.outputCount, 0);
+  assert.equal(permission.outputCount, 1);
   assert.equal(JSON.stringify(permission).includes("Launch plan"), false);
   assert.equal(coverage.metadata.stale, true);
   assert.ok(coverage.warningCount > 0);

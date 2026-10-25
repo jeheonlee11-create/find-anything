@@ -1,0 +1,1 @@
+ALTER TABLE `retrieval_traces` ADD `decision_summary_json` text;
