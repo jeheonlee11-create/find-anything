@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { queryTerms } from "../lib/workspace-search/matching.ts";
 import { readFile } from "node:fs/promises";
 
 const fixture = await readFile(new URL("../lib/demo/acme-fixture.ts", import.meta.url), "utf8");
@@ -51,8 +52,8 @@ test("the focused demo supports pricing and launch questions", () => {
   assert.match(fixture, /What is our current enterprise pricing/);
   assert.match(fixture, /When are we launching/);
   assert.match(search, /What is our current enterprise pricing and launch date/);
-  const corePromise = readFile(new URL("../lib/workspace-search/core.ts", import.meta.url), "utf8");
-  return corePromise.then((core) => assert.match(core, /QUERY_STOP_WORDS/));
+  // The natural-language demo question reduces to its content words.
+  assert.deepEqual(queryTerms("What is our current enterprise pricing and launch date?"), ["current", "enterprise", "pricing", "launch", "date"]);
 });
 
 test("production demo seed is admin-only, target-confirmed, credential-free, and non-destructive", () => {

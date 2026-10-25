@@ -4,6 +4,14 @@ import {
 } from "./confidence.ts";
 import { buildCoverageSnapshot, summarizeCoverageInventory, type CoverageInventoryRow, type CoverageSnapshot } from "./coverage-map.ts";
 import { calculateLiteralRanking, type RankingBreakdown } from "./ranking.ts";
+import {
+  collapseWhitespace,
+  containsWord,
+  countWords,
+  firstWordPosition,
+  normalizeText,
+  queryTerms,
+} from "./matching.ts";
 
 export type WorkspaceFileType = "all" | "docs" | "slides" | "sheets" | "pdf";
 export type WorkspaceSearchMode = "best" | "all";
@@ -21,6 +29,12 @@ export interface WorkspaceSearchFile {
   extractionError: string | null;
   extractionMode: string | null;
   structuralFallbackReason: string | null;
+  /**
+   * Extracted units. May be a subset of the file's stored units, as long as it
+   * contains EVERY unit with at least one whole-word query term: the D1 search
+   * path loads only those (plus the first unit, for a citation on title-only
+   * matches) instead of the whole corpus.
+   */
   units: Array<{
     id: string;
     unitType: string;
@@ -63,12 +77,7 @@ export interface WorkspaceSearchResult {
   snippet: string | null;
   score: number;
   citations: WorkspaceCitation[];
-  scoreBreakdown: {
-    title: number;
-    filename: number;
-    mimeType: number;
-    content: number;
-  };
+  /** Always equals `ranking.finalScore`; `ranking.factors` itemizes it. */
   ranking: RankingBreakdown;
   matchType: "literal";
   extractionMethod: string;
@@ -139,7 +148,8 @@ export interface WorkspaceSearchResponse {
     id: string; conflictType: string; detectionVersion: string; detectionMethod: string; leftFileId: string; rightFileId: string; leftValue: unknown; rightValue: unknown; leftCitation: WorkspaceCitation & { fileName?: string }; rightCitation: WorkspaceCitation & { fileName?: string }; newerFileId: string | null; relationshipInference: string; reasons: string[]; status: string; decision: unknown;
   }>;
 }
-export const MATCHING_POLICY_VERSION = "literal-and-v3";
+/** v4: whole-word term matching (v3 matched substrings, so "cat" hit "category"). */
+export const MATCHING_POLICY_VERSION = "literal-and-v4";
 
 const MIME_BY_TYPE: Record<Exclude<WorkspaceFileType, "all">, string> = {
   docs: "application/vnd.google-apps.document",
@@ -148,55 +158,15 @@ const MIME_BY_TYPE: Record<Exclude<WorkspaceFileType, "all">, string> = {
   pdf: "application/pdf",
 };
 
-function normalize(value: string): string {
-  return value.trim().toLocaleLowerCase();
-}
-const QUERY_STOP_WORDS = new Set([
-  "a", "an", "and", "are", "blocker", "blockers", "blocking", "each", "for", "from", "in", "is", "of",
-  "one", "the", "to", "what", "which", "who", "with",
-]);
-function queryTerms(value: string): string[] {
-  return normalize(value)
-    .split(/[^\p{L}\p{N}'-]+/u)
-    .filter((term) => term && !QUERY_STOP_WORDS.has(term));
-}
-
-function countOccurrences(haystack: string, needle: string): number {
-  if (!needle) return 0;
-  let count = 0;
-  let position = 0;
-  while ((position = haystack.indexOf(needle, position)) !== -1) {
-    count += 1;
-    position += needle.length;
-  }
-  return count;
-}
-
-function shortestTermDistance(text: string, terms: string[]): number | null {
-  if (terms.length < 2) return null;
-  const positions = terms.map((term) => text.indexOf(term));
-  return positions.some((position) => position < 0)
-    ? null
-    : Math.max(...positions) - Math.min(...positions);
-}
-
-function makeSnippet(text: string, terms: string[]): string | null {
-  const normalized = text.toLocaleLowerCase();
-  const indexes = terms
-    .map((term) => normalized.indexOf(term))
-    .filter((value) => value >= 0);
-  if (!indexes.length) return null;
-  const start = Math.max(0, Math.min(...indexes) - 80);
-  const end = Math.min(text.length, start + 240);
-  return `${start > 0 ? "…" : ""}${text.slice(start, end).replace(/\s+/g, " ").trim()}${end < text.length ? "…" : ""}`;
-}
-function excerpt(text: string, terms: string[]): string {
-  if (!text) return "";
-  const lower = text.toLocaleLowerCase(),
-    positions = terms
-      .map((term) => lower.indexOf(term))
-      .filter((position) => position >= 0),
-    start = Math.max(0, (positions.length ? Math.min(...positions) : 0) - 80),
+/**
+ * An excerpt of up to 240 characters around the first whole-word occurrence
+ * of any term. Returns null when no term occurs (or the text is empty).
+ */
+function excerptAround(text: string, terms: string[]): string | null {
+  if (!text) return null;
+  const position = firstWordPosition(text.toLocaleLowerCase(), terms);
+  if (position < 0 && terms.length) return null;
+  const start = Math.max(0, Math.max(0, position) - 80),
     end = Math.min(text.length, start + 240);
   return `${start > 0 ? "…" : ""}${text.slice(start, end).replace(/\s+/g, " ").trim()}${end < text.length ? "…" : ""}`;
 }
@@ -308,34 +278,33 @@ export function searchWorkspaceFiles(input: {
   }> = [];
   const excludedResults: Array<{ fileId: string; reason: string }> = [];
 
+  const phrase = collapseWhitespace(normalizeText(query));
   const matches = searchableEligible.flatMap((file) => {
     const nameOnly = file.indexStatus !== "indexed";
-    const normalizedName = normalize(file.name);
-    const normalizedMime = normalize(file.mimeType);
-    const content = nameOnly ? "" : file.units.map((unit) => unit.text).join("\n");
-    const normalizedContent = normalize(content);
-    const normalizedHeadings = normalize(file.units.filter((unit) => /heading|title/i.test(unit.unitType)).map((unit) => unit.text).join("\n"));
-    const searchable = `${normalizedName}\n${normalizedMime}\n${normalizedContent}`;
-    const titleHit =
-        terms.length > 0 && terms.some((term) => normalizedName.includes(term)),
-      mimeHit =
-        terms.length > 0 && terms.some((term) => normalizedMime.includes(term)),
-      contentHit =
-        terms.length > 0 &&
-        terms.some((term) => normalizedContent.includes(term));
+    const normalizedName = normalizeText(file.name);
+    const normalizedMime = normalizeText(file.mimeType);
+    // `units` may be a subset of the file's units, but always includes every
+    // unit that contains at least one query term (see WorkspaceSearchFile).
+    const units = nameOnly ? [] : file.units;
+    const unitTexts = units.map((unit) => unit.text.toLocaleLowerCase());
+    const termInName = terms.map((term) => containsWord(normalizedName, term));
+    const termInMime = terms.map((term) => containsWord(normalizedMime, term));
+    const termInContent = terms.map((term) => unitTexts.some((text) => containsWord(text, term)));
+    const titleHit = termInName.some(Boolean),
+      mimeHit = termInMime.some(Boolean),
+      contentHit = termInContent.some(Boolean);
     if (titleHit) candidateCounts.title += 1;
     if (mimeHit) candidateCounts.mimeType += 1;
     if (contentHit) candidateCounts.content += 1;
     if (titleHit || mimeHit || contentHit) candidateCounts.keyword += 1;
-    const literalMatch =
-      !terms.length || terms.every((term) => searchable.includes(term));
+    const literalMatch = terms.every((_, index) => termInName[index] || termInMime[index] || termInContent[index]);
     if (!literalMatch) {
       thresholdDecisions.push({
         fileId: file.id,
         decision: "excluded",
         reason: nameOnly
           ? "content is not indexed yet and not every query term matched the file name or type"
-          : "not every normalized query term matched indexed text or metadata",
+          : "not every query term matched indexed text or metadata as a whole word",
       });
       excludedResults.push({ fileId: file.id, reason: "matching policy" });
       return [];
@@ -356,94 +325,42 @@ export function searchWorkspaceFiles(input: {
       fileId: file.id,
       decision: "included",
       reason: nameOnly
-        ? "all normalized query terms matched the file name or type; content is not indexed yet"
-        : "all normalized query terms matched",
+        ? "all query terms matched the file name or type as whole words; content is not indexed yet"
+        : "all query terms matched as whole words",
     });
 
-    const explanation: string[] = [];
-    if (nameOnly)
-      explanation.push("name match (content not indexed yet)");
-    let score = 0;
-    const scoreBreakdown = { title: 0, filename: 0, mimeType: 0, content: 0 };
-    if (!terms.length) {
-      explanation.push("indexed file");
-    } else {
-      const nameMatches = terms.filter((term) => normalizedName.includes(term));
-      const mimeMatches = terms.filter((term) => normalizedMime.includes(term));
-      const contentMatches = terms.filter((term) =>
-        normalizedContent.includes(term),
-      );
-      if (nameMatches.length) {
-        explanation.push("title match", "filename match");
-        scoreBreakdown.title =
-          normalizedName === normalize(query) ? 80 : 30 * nameMatches.length;
-        scoreBreakdown.filename =
-          normalizedName === normalize(query) ? 40 : 20 * nameMatches.length;
-        score += scoreBreakdown.title + scoreBreakdown.filename;
-      }
-      const normalizedQuery = normalize(query),
-        exactTitle = normalizedName === normalizedQuery,
-        titlePhrase = normalizedQuery.length > 1 && normalizedName.includes(normalizedQuery),
-        contentPhrase = normalizedQuery.length > 1 && normalizedContent.includes(normalizedQuery);
-      if (exactTitle) {
-        explanation.push("exact title match");
-        scoreBreakdown.title += 120;
-        score += 120;
-      } else if (titlePhrase) {
-        explanation.push("exact phrase in filename");
-        scoreBreakdown.filename += 70;
-        score += 70;
-      }
-      if (contentPhrase) {
-        explanation.push("exact phrase in content");
-        scoreBreakdown.content += 45;
-        score += 45;
-      }
-      if (mimeMatches.length) {
-        explanation.push("MIME-type match");
-        scoreBreakdown.mimeType = 12 * mimeMatches.length;
-        score += scoreBreakdown.mimeType;
-      }
-      if (contentMatches.length) {
-        explanation.push("content match");
-        scoreBreakdown.content = Math.min(
-          40,
-          terms.reduce(
-            (total, term) => total + countOccurrences(normalizedContent, term),
-            0,
-          ) * 4,
-        );
-        score += scoreBreakdown.content;
-        const distance = shortestTermDistance(normalizedContent, terms),
-          proximityBonus = distance === null ? 0 : Math.max(0, 24 - Math.floor(distance / 20));
-        if (proximityBonus) explanation.push("query terms appear close together");
-        scoreBreakdown.content += proximityBonus;
-        score += proximityBonus;
-      }
-      const ageDays = Math.max(0, Date.now() - Date.parse(file.modifiedAt)) / 86_400_000,
-        recencyBonus = Number.isFinite(ageDays) ? Math.max(0, 12 - Math.floor(ageDays / 30)) : 0;
-      if (recencyBonus) explanation.push("recently modified");
-      score += recencyBonus;
-    }
-    const matchingUnits = file.units.filter(
-        (unit) =>
-          !terms.length ||
-          terms.some((term) => normalize(unit.text).includes(term)),
+    const matchingUnits = units.filter(
+        (_, index) => !terms.length || terms.some((term) => containsWord(unitTexts[index], term)),
       ),
-      citationUnits = (
-        matchingUnits.length ? matchingUnits : file.units.slice(0, 1)
-      ).slice(0, 5),
-      normalizedQuery = normalize(query),
-      exactTitle = normalizedName === normalizedQuery,
-      titlePhrase = normalizedQuery.length > 1 && normalizedName.includes(normalizedQuery),
-      contentPhrase = normalizedQuery.length > 1 && normalizedContent.includes(normalizedQuery),
-      titleTokenMatches = terms.filter((term) => normalizedName.includes(term)).length,
-      headingTokenMatches = terms.filter((term) => normalizedHeadings.includes(term)).length,
-      occurrenceCount = terms.reduce((total, term) => total + countOccurrences(normalizedContent, term), 0),
+      citationUnits = (matchingUnits.length ? matchingUnits : units.slice(0, 1)).slice(0, 5),
+      exactTitle = phrase.length > 0 && collapseWhitespace(normalizedName) === phrase,
+      titlePhrase = phrase.length > 1 && containsWord(collapseWhitespace(normalizedName), phrase),
+      contentPhrase = phrase.length > 1 && unitTexts.some((text) => containsWord(collapseWhitespace(text), phrase)),
+      titleTokenMatches = termInName.filter(Boolean).length,
+      headingTokenMatches = terms.filter((term) =>
+        units.some((unit, index) => /heading|title/i.test(unit.unitType) && containsWord(unitTexts[index], term)),
+      ).length,
+      occurrenceCount = terms.reduce(
+        (total, term) => total + unitTexts.reduce((sum, text) => sum + countWords(text, term), 0),
+        0,
+      ),
       freshnessDays = Number.isFinite(Date.parse(file.modifiedAt)) ? Math.max(0, Date.now() - Date.parse(file.modifiedAt)) / 86_400_000 : null,
       structuralCitation = citationUnits.some((unit) => unit.contentHash && Object.keys(unit.structuralLocation).length > 0),
+      // The ONLY score. Explanations below describe why the file matched;
+      // every point in `score` is an itemized factor in `ranking`.
       ranking = calculateLiteralRanking({ exactTitle, titlePhrase, contentPhrase, titleTokenMatches, filenameTokenMatches: titleTokenMatches, headingTokenMatches, occurrenceCount, freshnessDays, structuralCitation, authoritative: input.rankingContext?.authoritativeFileIds?.has(file.id) ?? false, unresolvedConflict: input.rankingContext?.unresolvedConflictFileIds?.has(file.id) ?? false, conflictAssessmentComplete: input.rankingContext?.conflictAssessmentComplete ?? false });
-    score = ranking.finalScore;
+    const explanation: string[] = [];
+    if (nameOnly) explanation.push("name match (content not indexed yet)");
+    if (!terms.length) explanation.push("indexed file");
+    if (titleHit) explanation.push("title match", "filename match");
+    if (exactTitle && terms.length) explanation.push("exact title match");
+    else if (titlePhrase) explanation.push("exact phrase in filename");
+    if (contentPhrase) explanation.push("exact phrase in content");
+    if (mimeHit) explanation.push("MIME-type match");
+    if (contentHit) explanation.push("content match");
+    if (terms.length && ranking.factors.some((item) => item.key === "freshness" && item.contribution > 0))
+      explanation.push("recently modified");
+    const matchedText = matchingUnits.map((unit) => unit.text).join("\n");
     return [
       {
         id: file.id,
@@ -455,11 +372,10 @@ export function searchWorkspaceFiles(input: {
         matchScope: (nameOnly ? "name_only" : "content") as
           | "content"
           | "name_only",
-        explanation: [...new Set(explanation)],
+        explanation,
         // No content was read, so there is nothing honest to excerpt.
-        snippet: nameOnly ? null : makeSnippet(content, terms),
-        score,
-        scoreBreakdown,
+        snippet: nameOnly || !terms.length ? null : excerptAround(matchedText, terms),
+        score: ranking.finalScore,
         ranking,
         matchType: "literal" as const,
         extractionMethod: file.extractionMode ?? "unknown",
@@ -470,7 +386,7 @@ export function searchWorkspaceFiles(input: {
           unitId: unit.id,
           unitType: unit.unitType,
           structuralLocation: unit.structuralLocation,
-          excerpt: excerpt(unit.text, terms),
+          excerpt: excerptAround(unit.text, terms) ?? excerptAround(unit.text, []) ?? "",
           contentHash: unit.contentHash,
           retrievedAt,
         })),
@@ -551,7 +467,7 @@ export function searchWorkspaceFiles(input: {
         : null,
     matchingPolicyVersion: MATCHING_POLICY_VERSION,
     diagnostics: {
-      normalizedQuery: normalize(query),
+      normalizedQuery: normalizeText(query),
       candidateCounts,
       duplicatesRemoved: 0,
       permissionDecisions,
