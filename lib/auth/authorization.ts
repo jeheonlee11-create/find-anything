@@ -44,17 +44,6 @@ export async function requireWorkspaceMember(
     : hidden("WORKSPACE_NOT_FOUND", "Workspace not found.");
 }
 
-export async function requireWorkspaceOwner(
-  actor: AuthenticatedActor,
-  workspaceId: string,
-): Promise<AuthorizedRequest | NextResponse> {
-  const authorized = await requireWorkspaceMember(actor, workspaceId);
-  if (authorized instanceof NextResponse) return authorized;
-  return authorized.membership.role === "owner"
-    ? authorized
-    : hidden("WORKSPACE_NOT_FOUND", "Workspace not found.");
-}
-
 export async function requireConnectorAccess(
   actor: AuthenticatedActor,
   workspaceId: string,

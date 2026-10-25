@@ -11,7 +11,6 @@ test("central authorization helpers cover every protected resource class", async
   for (const helper of [
     "requireAuthenticatedUser",
     "requireWorkspaceMember",
-    "requireWorkspaceOwner",
     "requireConnectorAccess",
     "requireRunAccess",
     "requireIndexedFileAccess",
@@ -23,15 +22,13 @@ test("central authorization helpers cover every protected resource class", async
   assert.match(source, /status: 404/);
 });
 
-test("legacy retrieval routes cannot bypass permission-aware workspace search", async () => {
-  const [search, receipt, trace] = await Promise.all([
-    readFile(new URL("../app/api/retrieval/search/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/api/retrieval/receipts/[receiptId]/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/api/retrieval/traces/[traceId]/route.ts", import.meta.url), "utf8"),
+test("the retired sample-retrieval routes are gone and the canonical audit routes check access", async () => {
+  const { access } = await import("node:fs/promises");
+  await assert.rejects(access(new URL("../app/api/retrieval", import.meta.url)));
+  const [receipt, trace] = await Promise.all([
+    readFile(new URL("../app/api/search-receipts/[receiptId]/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/retrieval-traces/[traceId]/route.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(search, /requireAuthenticatedUser/);
-  assert.match(search, /ROUTE_RETIRED/);
-  assert.doesNotMatch(search, /runSampleRetrieval/);
   assert.match(receipt, /requireReceiptAccess/);
   assert.match(trace, /requireTraceAccess/);
 });

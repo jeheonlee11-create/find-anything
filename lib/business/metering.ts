@@ -1,3 +1,0 @@
-export type MeterName="indexed_files"|"indexed_storage_bytes"|"monthly_searches"|"exhaustive_searches"|"api_requests"|"mcp_requests"|"embedding_operations"|"extraction_operations"|"export_operations"|"active_workspace_members";
-export interface UsageRecord{idempotencyKey:string;workspaceId:string;meter:MeterName;quantity:number;occurredAt:string;sourceRequestId:string;metadata:Record<string,string|number|boolean>}
-export function validateUsageRecord(record:UsageRecord){return record.idempotencyKey.length>=8&&record.workspaceId.length>0&&Number.isFinite(record.quantity)&&record.quantity>=0&&record.sourceRequestId.length>0;}

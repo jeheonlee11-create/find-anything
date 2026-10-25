@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { runSampleRetrieval } from "../lib/retrieval/core.ts";
 
 process.env.BETA_ACCESS_MODE = "open-local-test";
 
@@ -23,9 +22,6 @@ async function request(path, init = {}) {
     },
     { waitUntil() {}, passThroughOnException() {} },
   );
-}
-async function search(query, extra = {}) {
-  return runSampleRetrieval({ query, ...extra });
 }
 
 test("renders public product, growth, help, and trust routes with truthful disclosures", async () => {
@@ -198,69 +194,6 @@ test("Google Drive implementation includes state, PKCE, encrypted tokens, comple
     "sync_runs",
   ])
     assert.match(migration, new RegExp("CREATE TABLE.*" + table));
-});
-
-test("sample search returns more than three relevant files with structural evidence", async () => {
-  const result = await search("air pollution Detroit");
-  assert.ok(result.totalMatches > 3);
-  assert.equal(result.results.length, 20);
-  assert.match(result.results[0].citation, /(Paragraphs|Slide|cells|Page)/);
-  assert.equal(result.results[0].permissionStatus, "allowed");
-});
-
-test("unrelated query does not return Detroit sample results", async () => {
-  const result = await search("hi");
-  assert.equal(result.totalMatches, 0);
-  assert.deepEqual(result.results, []);
-});
-
-test("coverage marks extraction failures as incomplete and warns", async () => {
-  const result = await search("air");
-  assert.equal(result.coverage.complete, false);
-  assert.equal(result.coverage.completenessStatus, "incomplete");
-  assert.equal(result.coverage.extractionFailed, 2);
-  assert.equal(result.coverage.awaitingIndex, 2);
-  assert.ok(
-    result.coverage.warnings.some((warning) => /incomplete/i.test(warning)),
-  );
-});
-
-test("receipt matches results and is labeled exportable rather than immutable", async () => {
-  const result = await search("environmental justice");
-  assert.equal(result.receipt.label, "Exportable retrieval record");
-  assert.equal(result.receipt.returnedEvidence.length, result.results.length);
-  assert.equal(result.receipt.prototype, true);
-});
-
-test("Find All pagination is stable and non-duplicating across a large result set", async () => {
-  const init = (page) =>
-    runSampleRetrieval({
-      query: "air pollution",
-      mode: "find_all",
-      page,
-      pageSize: 20,
-    });
-  const first = await init(1);
-  const second = await init(2);
-  assert.ok(first.totalMatches > 40);
-  assert.equal(first.results.length, 20);
-  assert.equal(second.results.length, 20);
-  assert.equal(
-    new Set([...first.results, ...second.results].map((x) => x.file.id)).size,
-    40,
-  );
-});
-
-test("Google Docs-only filtering returns only documents", async () => {
-  const result = await search("air pollution", {
-    filters: { fileType: "document" },
-    mode: "find_all",
-    pageSize: 100,
-  });
-  assert.ok(result.totalMatches > 3);
-  assert.ok(
-    result.results.every((item) => item.file.mimeType.includes("document")),
-  );
 });
 
 test("health and readiness fail safely when production dependencies are missing", async () => {
