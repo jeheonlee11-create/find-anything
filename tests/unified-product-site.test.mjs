@@ -506,7 +506,7 @@ test("the public origin is centralized and the OAuth redirect derives from it", 
     /const explicit = process\.env\.GOOGLE_REDIRECT_URI\?\.trim\(\);\s*if \(explicit\) return explicit;/,
   );
   assert.match(urls, /GOOGLE_DRIVE_CALLBACK_PATH/);
-  assert.match(serverEnv, /redirectUri:googleRedirectUri\(\)/);
+  assert.match(serverEnv, /redirectUri:\s*googleRedirectUri\(\)/);
   assert.match(env, /NEXT_PUBLIC_SITE_URL=https:\/\/findanything\.dev/);
   // The scopes and the OAuth publishing status are untouched by any of this.
   const oauth = await source("lib/google-drive/oauth.ts");

@@ -1,10 +1,128 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Google API payloads are runtime-shaped and parsed defensively. */
-import type {ExtractedDriveUnit} from "./extraction";
-async function unit(unitType:ExtractedDriveUnit["unitType"],location:Record<string,unknown>,text:string):Promise<ExtractedDriveUnit>{return{unitType,location,text,contentHash:await hash(text)}}
-async function hash(value:string){const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value));return Array.from(new Uint8Array(digest)).map(byte=>byte.toString(16).padStart(2,"0")).join("")}
-function textRuns(paragraph:any):string{return(paragraph?.elements??[]).map((element:any)=>element.textRun?.content??element.autoText?.content??"").join("").trim()}
-export async function extractGoogleDoc(document:any){const output:ExtractedDriveUnit[]=[],paragraphs=(document?.body?.content??[]).map((item:any)=>item.paragraph).filter(Boolean);let heading="";for(let index=0;index<paragraphs.length;index++){const paragraph=paragraphs[index],text=textRuns(paragraph);if(!text)continue;const style=paragraph.paragraphStyle?.namedStyleType??"NORMAL_TEXT";if(String(style).startsWith("HEADING")||style==="TITLE"||style==="SUBTITLE")heading=text;output.push(await unit("doc_paragraph",{heading,paragraphIndex:index,paragraphRange:`${index}-${index}`,namedStyle:String(style)},text))}return output}
-function slideText(element:any){return(element?.shape?.text?.textElements??element?.table?.tableRows?.flatMap((row:any)=>row.tableCells??[]).flatMap((cell:any)=>cell.text?.textElements??[])??[]).map((item:any)=>item.textRun?.content??item.autoText?.content??"").join("").trim()}
-export async function extractGoogleSlides(presentation:any){const output:ExtractedDriveUnit[]=[];for(let slideIndex=0;slideIndex<(presentation?.slides??[]).length;slideIndex++){const slide=presentation.slides[slideIndex];for(const element of slide.pageElements??[]){const text=slideText(element);if(text)output.push(await unit("slide_element",{slideNumber:slideIndex+1,elementType:element.shape?.shapeType?`shape:${element.shape.shapeType}`:element.table?"table":"pageElement",objectId:element.objectId??""},text))}for(const element of slide.slideProperties?.notesPage?.pageElements??[]){const text=slideText(element);if(text)output.push(await unit("slide_notes",{slideNumber:slideIndex+1,elementType:"speaker_notes",objectId:element.objectId??""},text))}}return output}
-function columnName(index:number){let value="";for(let current=index+1;current>0;current=Math.floor((current-1)/26))value=String.fromCharCode(65+(current-1)%26)+value;return value}
-export async function extractGoogleSheet(spreadsheet:any){const output:ExtractedDriveUnit[]=[];for(const sheet of spreadsheet?.sheets??[]){const name=sheet.properties?.title??"Sheet",rows=sheet.data?.[0]?.rowData??[],columnHeaders=(rows[0]?.values??[]).map((cell:any)=>String(cell.formattedValue??""));for(let rowIndex=0;rowIndex<rows.length;rowIndex++){const values=rows[rowIndex]?.values??[],rowHeader=String(values[0]?.formattedValue??"");for(let columnIndex=0;columnIndex<values.length;columnIndex++){const value=values[columnIndex]?.formattedValue;if(value===undefined||value===null||String(value)==="")continue;const range=`${name}!${columnName(columnIndex)}${rowIndex+1}`;output.push(await unit("sheet_cell",{sheetName:name,cellRange:range,rowHeader,columnHeader:columnHeaders[columnIndex]??"",rowIndex:rowIndex+1,columnIndex:columnIndex+1},String(value)))}}}return output}
+import type { ExtractedDriveUnit } from "./extraction";
+async function unit(
+  unitType: ExtractedDriveUnit["unitType"],
+  location: Record<string, unknown>,
+  text: string,
+): Promise<ExtractedDriveUnit> {
+  return { unitType, location, text, contentHash: await hash(text) };
+}
+async function hash(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+function textRuns(paragraph: any): string {
+  return (paragraph?.elements ?? [])
+    .map((element: any) => element.textRun?.content ?? element.autoText?.content ?? "")
+    .join("")
+    .trim();
+}
+export async function extractGoogleDoc(document: any) {
+  const output: ExtractedDriveUnit[] = [],
+    paragraphs = (document?.body?.content ?? []).map((item: any) => item.paragraph).filter(Boolean);
+  let heading = "";
+  for (let index = 0; index < paragraphs.length; index++) {
+    const paragraph = paragraphs[index],
+      text = textRuns(paragraph);
+    if (!text) continue;
+    const style = paragraph.paragraphStyle?.namedStyleType ?? "NORMAL_TEXT";
+    if (String(style).startsWith("HEADING") || style === "TITLE" || style === "SUBTITLE") heading = text;
+    output.push(
+      await unit(
+        "doc_paragraph",
+        { heading, paragraphIndex: index, paragraphRange: `${index}-${index}`, namedStyle: String(style) },
+        text,
+      ),
+    );
+  }
+  return output;
+}
+function slideText(element: any) {
+  return (
+    element?.shape?.text?.textElements ??
+    element?.table?.tableRows
+      ?.flatMap((row: any) => row.tableCells ?? [])
+      .flatMap((cell: any) => cell.text?.textElements ?? []) ??
+    []
+  )
+    .map((item: any) => item.textRun?.content ?? item.autoText?.content ?? "")
+    .join("")
+    .trim();
+}
+export async function extractGoogleSlides(presentation: any) {
+  const output: ExtractedDriveUnit[] = [];
+  for (let slideIndex = 0; slideIndex < (presentation?.slides ?? []).length; slideIndex++) {
+    const slide = presentation.slides[slideIndex];
+    for (const element of slide.pageElements ?? []) {
+      const text = slideText(element);
+      if (text)
+        output.push(
+          await unit(
+            "slide_element",
+            {
+              slideNumber: slideIndex + 1,
+              elementType: element.shape?.shapeType
+                ? `shape:${element.shape.shapeType}`
+                : element.table
+                  ? "table"
+                  : "pageElement",
+              objectId: element.objectId ?? "",
+            },
+            text,
+          ),
+        );
+    }
+    for (const element of slide.slideProperties?.notesPage?.pageElements ?? []) {
+      const text = slideText(element);
+      if (text)
+        output.push(
+          await unit(
+            "slide_notes",
+            { slideNumber: slideIndex + 1, elementType: "speaker_notes", objectId: element.objectId ?? "" },
+            text,
+          ),
+        );
+    }
+  }
+  return output;
+}
+function columnName(index: number) {
+  let value = "";
+  for (let current = index + 1; current > 0; current = Math.floor((current - 1) / 26))
+    value = String.fromCharCode(65 + ((current - 1) % 26)) + value;
+  return value;
+}
+export async function extractGoogleSheet(spreadsheet: any) {
+  const output: ExtractedDriveUnit[] = [];
+  for (const sheet of spreadsheet?.sheets ?? []) {
+    const name = sheet.properties?.title ?? "Sheet",
+      rows = sheet.data?.[0]?.rowData ?? [],
+      columnHeaders = (rows[0]?.values ?? []).map((cell: any) => String(cell.formattedValue ?? ""));
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      const values = rows[rowIndex]?.values ?? [],
+        rowHeader = String(values[0]?.formattedValue ?? "");
+      for (let columnIndex = 0; columnIndex < values.length; columnIndex++) {
+        const value = values[columnIndex]?.formattedValue;
+        if (value === undefined || value === null || String(value) === "") continue;
+        const range = `${name}!${columnName(columnIndex)}${rowIndex + 1}`;
+        output.push(
+          await unit(
+            "sheet_cell",
+            {
+              sheetName: name,
+              cellRange: range,
+              rowHeader,
+              columnHeader: columnHeaders[columnIndex] ?? "",
+              rowIndex: rowIndex + 1,
+              columnIndex: columnIndex + 1,
+            },
+            String(value),
+          ),
+        );
+      }
+    }
+  }
+  return output;
+}

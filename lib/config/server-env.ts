@@ -1,6 +1,33 @@
-import {googleRedirectUri} from "@/lib/config/urls";
-export interface GoogleDriveEnvironment{clientId:string;clientSecret:string;redirectUri:string;tokenEncryptionKey:string}
+import { googleRedirectUri } from "@/lib/config/urls";
+export interface GoogleDriveEnvironment {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  tokenEncryptionKey: string;
+}
 // The redirect URI derives from the canonical public origin unless GOOGLE_REDIRECT_URI
 // is set explicitly, which always takes precedence. Scopes and publishing status are
 // unaffected by this resolution.
-export function requireGoogleDriveEnvironment():GoogleDriveEnvironment{const values={clientId:process.env.GOOGLE_CLIENT_ID,clientSecret:process.env.GOOGLE_CLIENT_SECRET,redirectUri:googleRedirectUri(),tokenEncryptionKey:process.env.TOKEN_ENCRYPTION_KEY};const missing=Object.entries(values).filter(([,value])=>!value).map(([key])=>key);if(missing.length)throw new Error(`Missing Google Drive server configuration: ${missing.join(", ")}`);let redirect:URL;try{redirect=new URL(values.redirectUri!)}catch{throw new Error("GOOGLE_REDIRECT_URI must be an absolute URL")};if(redirect.protocol!=="https:"&&redirect.hostname!=="localhost")throw new Error("GOOGLE_REDIRECT_URI must use HTTPS outside localhost");if(!/^[a-f0-9]{64}$/i.test(values.tokenEncryptionKey!)&&!/^[A-Za-z0-9_-]{43}$/.test(values.tokenEncryptionKey!))throw new Error("TOKEN_ENCRYPTION_KEY must encode exactly 32 bytes");return values as GoogleDriveEnvironment}
+export function requireGoogleDriveEnvironment(): GoogleDriveEnvironment {
+  const values = {
+    clientId: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    redirectUri: googleRedirectUri(),
+    tokenEncryptionKey: process.env.TOKEN_ENCRYPTION_KEY,
+  };
+  const missing = Object.entries(values)
+    .filter(([, value]) => !value)
+    .map(([key]) => key);
+  if (missing.length) throw new Error(`Missing Google Drive server configuration: ${missing.join(", ")}`);
+  let redirect: URL;
+  try {
+    redirect = new URL(values.redirectUri!);
+  } catch {
+    throw new Error("GOOGLE_REDIRECT_URI must be an absolute URL");
+  }
+  if (redirect.protocol !== "https:" && redirect.hostname !== "localhost")
+    throw new Error("GOOGLE_REDIRECT_URI must use HTTPS outside localhost");
+  if (!/^[a-f0-9]{64}$/i.test(values.tokenEncryptionKey!) && !/^[A-Za-z0-9_-]{43}$/.test(values.tokenEncryptionKey!))
+    throw new Error("TOKEN_ENCRYPTION_KEY must encode exactly 32 bytes");
+  return values as GoogleDriveEnvironment;
+}
