@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
-    "next": "^16.2.10",
+    "next": "16.4.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "unpdf": "^1.6.2"
@@ -37,7 +37,7 @@
     "@vitejs/plugin-rsc": "^0.5.27",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
-    "eslint-config-next": "^16.2.10",
+    "eslint-config-next": "16.4.1",
     "react-server-dom-webpack": "^19.2.7",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
@@ -46,7 +46,7 @@
     "wrangler": "^4.111.0"
   },
   "overrides": {
-    "postcss": "8.5.10"
+    "postcss": "8.5.23"
   },
   "type": "module"
 }
