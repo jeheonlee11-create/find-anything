@@ -1,7 +1,8 @@
-import { createHash, createHmac, randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { chmod, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { apiKeyHashKeys, hashApiKey } from "../lib/api/key-hash.ts";
 import { demoFiles, inaccessibleFinanceFile, DEMO_AUTHORIZED_DISCOVERED, DEMO_CONNECTOR_ID, DEMO_REMOVED_OR_UNAUTHORIZED, DEMO_WORKSPACE_ID, DEMO_WORKSPACE_NAME } from "./demo-fixture.mjs";
 
 const root = new URL("../", import.meta.url).pathname;
@@ -12,9 +13,9 @@ const actorId = `actor_${createHash("sha256").update(`find-anything-actor-v1:${l
 const now = "2026-07-02T16:30:00.000Z";
 const apiKey = `demo_${randomBytes(24).toString("hex")}`;
 const env = await localEnv(join(root, ".env.local"));
-const pepper = env.API_KEY_PEPPER || env.TOKEN_ENCRYPTION_KEY;
-if (!pepper) throw new Error("API_KEY_PEPPER or TOKEN_ENCRYPTION_KEY is required in .env.local for the local demo API key.");
-const apiKeyHash = createHmac("sha256", pepper).update(apiKey).digest("hex");
+if (!env.API_KEY_PEPPER && !env.TOKEN_ENCRYPTION_KEY) throw new Error("API_KEY_PEPPER or TOKEN_ENCRYPTION_KEY is required in .env.local for the local demo API key.");
+// Same derivation as lib/api/auth.ts, so the seeded key validates.
+const apiKeyHash = await hashApiKey(apiKey, (await apiKeyHashKeys(env)).current);
 const q = (value) => `'${String(value).replaceAll("'", "''")}'`;
 const statements = [
   "PRAGMA foreign_keys=OFF",
