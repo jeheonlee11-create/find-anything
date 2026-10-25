@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireWorkspaceApiKey } from "@/lib/api/auth";
-import {
-  correctRelationship,
-  refreshWorkspaceRelationships,
-  relationshipsForFile,
-} from "@/lib/lineage/repository";
+import { apiFileRelationships } from "@/lib/api/v1-handlers";
+import { correctRelationship } from "@/lib/lineage/repository";
 import { currentlyAuthorizedWorkspaceFile } from "@/lib/workspace-search/authorization";
 export async function GET(
   request: Request,
@@ -12,25 +9,7 @@ export async function GET(
 ) {
   const principal = await requireWorkspaceApiKey(request);
   if (principal instanceof NextResponse) return principal;
-  const { fileId } = await params;
-  const authorized = await currentlyAuthorizedWorkspaceFile(
-    principal.workspaceId,
-    fileId,
-  );
-  if (!authorized.file)
-    return NextResponse.json(
-      { error: { code: "FILE_NOT_FOUND", message: "File not found." } },
-      { status: 404 },
-    );
-  await refreshWorkspaceRelationships(principal.workspaceId, authorized.files);
-  return NextResponse.json({
-    fileId,
-    relationships: await relationshipsForFile(
-      principal.workspaceId,
-      fileId,
-      new Set(authorized.files.map((file) => file.id)),
-    ),
-  });
+  return apiFileRelationships(principal, (await params).fileId);
 }
 export async function PATCH(
   request: Request,

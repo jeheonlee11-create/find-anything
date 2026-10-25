@@ -138,7 +138,7 @@ test("confidence is persisted in isolated traces and receipts and returned by RE
   assert.match(pipeline, /conflictsForFiles/);
   assert.match(pipeline, /unresolvedConflictCount/);
   assert.match(apiRoute, /requireWorkspaceApiKey/);
-  assert.match(apiRoute, /WORKSPACE_FORBIDDEN/);
+  assert.match(await readFile(new URL("../lib/api/v1-handlers.ts", import.meta.url), "utf8"), /WORKSPACE_FORBIDDEN/);
   assert.match(serialization, /retrievalConfidence/);
   assert.equal((migration.match(/ADD `confidence_/g) ?? []).length, 10);
 });

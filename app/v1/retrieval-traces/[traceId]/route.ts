@@ -1,1 +1,9 @@
-import {NextResponse} from "next/server";import {requireWorkspaceApiKey} from "@/lib/api/auth";import {traceForWorkspace} from "@/lib/workspace-search/audit";import {publicTrace} from "@/lib/workspace-search/serialization";export async function GET(request:Request,{params}:{params:Promise<{traceId:string}>}){const principal=await requireWorkspaceApiKey(request);if(principal instanceof NextResponse)return principal;const {traceId}=await params,row=await traceForWorkspace(principal.workspaceId,traceId);return row?NextResponse.json(publicTrace(row)):NextResponse.json({error:{code:"TRACE_NOT_FOUND",message:"Trace not found."}},{status:404})}
+import { NextResponse } from "next/server";
+import { requireWorkspaceApiKey } from "@/lib/api/auth";
+import { apiTrace } from "@/lib/api/v1-handlers";
+
+export async function GET(request: Request, { params }: { params: Promise<{ traceId: string }> }) {
+  const principal = await requireWorkspaceApiKey(request);
+  if (principal instanceof NextResponse) return principal;
+  return apiTrace(principal, (await params).traceId);
+}

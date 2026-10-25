@@ -1,152 +1,92 @@
 import { NextResponse } from "next/server";
-import { requireWorkspaceApiKey } from "@/lib/api/auth";
-const searchSchema={type:"object",required:["query"],additionalProperties:false,properties:{query:{type:"string",minLength:1,maxLength:500},fileType:{type:"string",enum:["all","docs","slides","sheets","pdf"]},cursor:{type:"string"},pageSize:{type:"integer",minimum:1,maximum:100}}};
-const idSchema=(property:string)=>({type:"object",required:[property],additionalProperties:false,properties:{[property]:{type:"string",minLength:1}}});
-const diffSchema={type:"object",required:["beforeTraceId","afterTraceId"],additionalProperties:false,properties:{beforeTraceId:{type:"string",minLength:1},afterTraceId:{type:"string",minLength:1},manual:{type:"boolean"}}};
-const definitions = [
-  {name:"search_files",description:"Rank literal matches with exact evidence, stored factor-by-factor ranking explanations, and retrieval confidence.",inputSchema:searchSchema},
-  {name:"find_all_files",description:"Return every literal match in stable exhaustive order with stored ranking explanations and cursor pagination.",inputSchema:searchSchema},
-  {name:"get_exact_evidence",description:"Get structural citations for one workspace file.",inputSchema:idSchema("fileId")},
-  {name:"get_search_coverage",description:"Get indexing coverage for the API-key workspace.",inputSchema:{type:"object",additionalProperties:false,properties:{}}},
-  {name:"get_retrieval_trace",description:"Get one authorized durable retrieval trace including versioned persisted replay events, stored ranking breakdowns, coverage, conflicts, and confidence. Older traces return replay as null.",inputSchema:idSchema("traceId")},
-  {name:"compare_retrievals",description:"Deterministically compare two authorized persisted retrieval traces without rerunning search or claiming unsupported causation. Currently unauthorized prior sources are redacted as unavailable.",inputSchema:diffSchema},
-  {name:"get_search_receipt",description:"Get one durable search receipt including its exact stored ranking breakdowns.",inputSchema:idSchema("receiptId")},
-  {name:"get_file_relationships",description:"Get explainable inferred relationships for one file.",inputSchema:idSchema("fileId")},
-  {name:"get_workspace_conflicts",description:"Get deterministic conflicts with both exact citations; no winner is inferred.",inputSchema:{type:"object",additionalProperties:false,properties:{}}},
-  {name:"review_conflict",description:"Record an authoritative-source, expected-difference, resolved, or false-positive decision.",inputSchema:{type:"object",required:["conflictId","status"],additionalProperties:false,properties:{conflictId:{type:"string",minLength:1},status:{type:"string",enum:["authoritative_source","expected_difference","resolved","false_positive"]},authoritativeFileId:{type:"string"},note:{type:"string",maxLength:500}}}},
-];
+import { requireWorkspaceApiKey, type ApiPrincipal } from "@/lib/api/auth";
+import {
+  apiConflicts,
+  apiCoverage,
+  apiFileCitations,
+  apiFileRelationships,
+  apiReceipt,
+  apiRetrievalDiff,
+  apiReviewConflict,
+  apiSearch,
+  apiTrace,
+} from "@/lib/api/v1-handlers";
+import { MCP_TOOLS, toolDefinition, validateToolArguments } from "@/lib/mcp/tools";
+
+/**
+ * MCP server (JSON-RPC 2.0 over HTTP POST), authenticated with a workspace API
+ * key. Each tool's arguments are validated against its advertised input schema
+ * before anything runs, then the tool calls the same in-process handler as the
+ * matching /v1 route. Tools: get_search_coverage, get_retrieval_trace,
+ * compare_retrievals, get_search_receipt, get_workspace_conflicts,
+ * review_conflict, and the rest of MCP_TOOLS.
+ */
+type Rpc = { id?: string | number; method?: string; params?: { name?: string; arguments?: unknown } };
+
+function runTool(name: string, args: Record<string, unknown>, principal: ApiPrincipal, requestId: string): Promise<Response> | null {
+  const id = (key: string) => String(args[key]);
+  switch (name) {
+    case "search_files":
+    case "find_all_files":
+      return apiSearch(principal, { ...args, mode: name === "find_all_files" ? "all" : "best" }, requestId);
+    case "get_exact_evidence":
+      return apiFileCitations(principal, id("fileId"));
+    case "get_search_coverage":
+      return apiCoverage(principal, principal.workspaceId);
+    case "get_retrieval_trace":
+      return apiTrace(principal, id("traceId"));
+    case "get_search_receipt":
+      return apiReceipt(principal, id("receiptId"));
+    case "compare_retrievals":
+      return apiRetrievalDiff(principal, args);
+    case "get_file_relationships":
+      return apiFileRelationships(principal, id("fileId"));
+    case "get_workspace_conflicts":
+      return apiConflicts(principal, principal.workspaceId);
+    case "review_conflict":
+      return apiReviewConflict(principal, principal.workspaceId, args);
+    default:
+      return null;
+  }
+}
+
 export async function POST(request: Request) {
   const principal = await requireWorkspaceApiKey(request);
   if (principal instanceof NextResponse) return principal;
-  const rpc = (await request.json().catch(() => null)) as {
-    id?: string | number;
-    method?: string;
-    params?: { name?: string; arguments?: Record<string, unknown> };
-  } | null;
-  if (!rpc)
-    return json(null, undefined, { code: -32700, message: "Parse error" });
+  const rpc = (await request.json().catch(() => null)) as Rpc | null;
+  if (!rpc) return json(null, undefined, { code: -32700, message: "Parse error" });
   if (rpc.method === "initialize")
     return json(rpc.id, {
       protocolVersion: "2025-03-26",
       capabilities: { tools: {} },
       serverInfo: { name: "find-anything", version: "1.0.0" },
     });
-  if (rpc.method === "tools/list") return json(rpc.id, { tools: definitions });
-  if (rpc.method !== "tools/call" || !rpc.params?.name)
-    return json(rpc.id, undefined, {
-      code: -32601,
-      message: "Method not found",
-    });
-  const args = rpc.params.arguments ?? {};
-  if (args.workspaceId && args.workspaceId !== principal.workspaceId)
-    return json(rpc.id, undefined, {
-      code: -32003,
-      message: "WORKSPACE_FORBIDDEN",
-    });
-  const target = toolTarget(
-    rpc.params.name,
-    args,
-    principal.workspaceId,
-    request.url,
-  );
-  if (!target)
-    return json(rpc.id, undefined, { code: -32602, message: "Unknown tool" });
-  const response = await fetch(target.url, {
-      method: target.method,
-      headers: {
-        authorization: request.headers.get("authorization") ?? "",
-        "content-type": "application/json",
-        "x-request-id":
-          request.headers.get("x-request-id") ?? crypto.randomUUID(),
-      },
-      body: target.body ? JSON.stringify(target.body) : undefined,
-    }),
-    result = await response
-      .json()
-      .catch(() => ({
-        error: {
-          code: "UPSTREAM_ERROR",
-          message: "Tool response was not JSON.",
-        },
-      }));
-  if (!response.ok)
-    return json(rpc.id, undefined, {
-      code: -32000,
-      message: result.error?.code ?? "TOOL_FAILED",
-      data: result,
-    });
-  return json(rpc.id, {
-    content: [{ type: "text", text: JSON.stringify(result) }],
-    structuredContent: result,
-  });
+  if (rpc.method === "tools/list") return json(rpc.id, { tools: MCP_TOOLS });
+  if (rpc.method !== "tools/call" || !rpc.params?.name) return json(rpc.id, undefined, { code: -32601, message: "Method not found" });
+  const tool = toolDefinition(rpc.params.name);
+  if (!tool) return json(rpc.id, undefined, { code: -32602, message: "Unknown tool" });
+  const supplied = rpc.params.arguments ?? {};
+  // A workspaceId is never needed (the API key names the workspace); one that
+  // names another workspace is refused, and a matching one is ignored.
+  if (typeof supplied === "object" && supplied !== null && "workspaceId" in supplied) {
+    const { workspaceId, ...rest } = supplied as Record<string, unknown>;
+    if (workspaceId !== principal.workspaceId) return json(rpc.id, undefined, { code: -32003, message: "WORKSPACE_FORBIDDEN" });
+    rpc.params.arguments = rest;
+  }
+  const args = rpc.params.arguments ?? {},
+    problems = validateToolArguments(tool.inputSchema, args);
+  if (problems.length) return json(rpc.id, undefined, { code: -32602, message: "Invalid params", data: { problems } });
+  const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID(),
+    response = await runTool(tool.name, args as Record<string, unknown>, principal, requestId);
+  if (!response) return json(rpc.id, undefined, { code: -32602, message: "Unknown tool" });
+  const result =
+    response.status === 204
+      ? { ok: true }
+      : await response.json().catch(() => ({ error: { code: "TOOL_FAILED", message: "Tool response was not JSON." } }));
+  if (!response.ok) return json(rpc.id, undefined, { code: -32000, message: result.error?.code ?? "TOOL_FAILED", data: result });
+  return json(rpc.id, { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result });
 }
-function toolTarget(
-  name: string,
-  args: Record<string, unknown>,
-  workspaceId: string,
-  base: string,
-) {
-  const url = (path: string) => new URL(path, base).toString();
-  if (name === "search_files" || name === "find_all_files")
-    return {
-      url: url("/v1/search"),
-      method: "POST",
-      body: {
-        ...args,
-        workspaceId,
-        mode: name === "find_all_files" ? "all" : "best",
-      },
-    };
-  if (name === "get_exact_evidence")
-    return {
-      url: url(
-        `/v1/files/${encodeURIComponent(String(args.fileId ?? ""))}/citations`,
-      ),
-      method: "GET",
-    };
-  if (name === "get_search_coverage")
-    return {
-      url: url(`/v1/workspaces/${encodeURIComponent(workspaceId)}/coverage`),
-      method: "GET",
-    };
-  if (name === "get_retrieval_trace")
-    return {
-      url: url(
-        `/v1/retrieval-traces/${encodeURIComponent(String(args.traceId ?? ""))}`,
-      ),
-      method: "GET",
-    };
-  if (name === "get_search_receipt")
-    return {
-      url: url(
-        `/v1/search-receipts/${encodeURIComponent(String(args.receiptId ?? ""))}`,
-      ),
-      method: "GET",
-    };
-  if (name === "compare_retrievals")
-    return {
-      url: url("/v1/retrieval-diffs"),
-      method: "POST",
-      body: { ...args, workspaceId },
-    };
-  if (name === "get_file_relationships")
-    return {
-      url: url(
-        `/v1/files/${encodeURIComponent(String(args.fileId ?? ""))}/relationships`,
-      ),
-      method: "GET",
-    };
-  if (name === "get_workspace_conflicts") return { url: url(`/v1/workspaces/${encodeURIComponent(workspaceId)}/conflicts`), method: "GET" };
-  if (name === "review_conflict") return { url: url(`/v1/workspaces/${encodeURIComponent(workspaceId)}/conflicts`), method: "PATCH", body: args };
-  return null;
-}
-function json(
-  id: string | number | null | undefined,
-  result?: unknown,
-  error?: unknown,
-) {
-  return NextResponse.json(
-    { jsonrpc: "2.0", id: id ?? null, ...(error ? { error } : { result }) },
-    { headers: { "cache-control": "no-store" } },
-  );
+
+function json(id: string | number | null | undefined, result?: unknown, error?: unknown) {
+  return NextResponse.json({ jsonrpc: "2.0", id: id ?? null, ...(error ? { error } : { result }) }, { headers: { "cache-control": "no-store" } });
 }

@@ -60,7 +60,7 @@ test("schema, serialization, UI, REST, and MCP preserve old traces and authoriza
     readFile(new URL("../app/components/audit-viewer.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/retrieval-traces/[traceId]/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/v1/retrieval-traces/[traceId]/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/api/mcp/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/mcp/tools.ts", import.meta.url), "utf8"),
   ]);
   assert.match(schema, /traceEventSchemaVersion/);
   assert.match(audit, /traceEventsJson/);

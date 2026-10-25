@@ -287,8 +287,8 @@ test("every workspace search persists exactly one trace and receipt with exports
 test("developer API and MCP require scoped API keys and expose every requested tool", async () => {
   const [auth, v1, mcp] = await Promise.all([
     readFile(new URL("../lib/api/auth.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/v1/search/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/api/mcp/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/api/v1-handlers.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/mcp/tools.ts", import.meta.url), "utf8"),
   ]);
   assert.match(auth, /Bearer/);
   assert.match(auth, /keyHash/);

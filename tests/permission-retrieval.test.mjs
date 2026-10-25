@@ -51,12 +51,11 @@ test("Find All ordering is stable and fallback content remains searchable", () =
 });
 test("active routes enforce membership, connector status, and current Drive inventory", async () => {
   // Both search routes share one pipeline, which re-checks Drive inventory.
-  for (const path of ["../app/api/workspaces/[workspaceId]/search/route.ts", "../app/v1/search/route.ts"])
+  for (const path of ["../app/api/workspaces/[workspaceId]/search/route.ts", "../lib/api/v1-handlers.ts"])
     assert.match(await readFile(new URL(path, import.meta.url), "utf8"), /runWorkspaceSearch/);
   for (const path of [
     "../lib/workspace-search/run-search.ts",
-    "../app/v1/files/[fileId]/citations/route.ts",
-    "../app/v1/files/[fileId]/relationships/route.ts",
+    "../lib/api/v1-handlers.ts",
   ]) {
     const source = await readFile(new URL(path, import.meta.url), "utf8");
     assert.match(source, /currentAuthorized|currentlyAuthorized/);
