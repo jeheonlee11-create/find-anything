@@ -1,3 +1,6 @@
+> Superseded on 2026-09-17, when Drive access moved to the per-file `drive.file`
+> scope with Google's picker (commit `b416eff`). Kept for history; do not submit.
+
 # Google restricted-scope verification — submission pack
 
 Prepared 2026-09-16. Everything in this file is verified against the code as of

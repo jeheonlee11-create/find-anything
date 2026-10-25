@@ -13,5 +13,5 @@ The repository deploys through OpenAI Sites with a Cloudflare Worker-compatible 
 
 DNS and registrar access are manual requirements; this repository cannot purchase a domain or change registrar records.
 
-`findanything.dev` is currently served by a separate Cloudflare Pages project built from `marketing-site/`, so moving it to this application is a release-and-reattach operation, not an additive one. The precise sequence, verification steps, and rollback are in [CUSTOM_DOMAIN_CUTOVER.md](CUSTOM_DOMAIN_CUTOVER.md). Google Cloud Console steps are in [FOUNDER_GOOGLE_CONSOLE_ACTIONS.md](FOUNDER_GOOGLE_CONSOLE_ACTIONS.md).
+`findanything.dev` is currently served by a separate Cloudflare Pages project built from `marketing-site/`, so moving it to this application is a release-and-reattach operation, not an additive one. The precise sequence, verification steps, and rollback are in [custom-domain cutover](custom-domain-cutover.md). Google Cloud Console steps are in [Google Cloud Console actions](google-console-actions.md).
 

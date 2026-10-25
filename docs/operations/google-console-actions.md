@@ -19,6 +19,9 @@ In **APIs & Services → Library**, in the same project as the OAuth client, ena
 - Google Docs API
 - Google Sheets API
 - Google Slides API
+- Google Picker API (the user chooses files with Google's picker; create a
+  browser API key restricted to it and set `GOOGLE_PICKER_API_KEY`, and set
+  `GOOGLE_PROJECT_NUMBER` to the Cloud project number)
 
 The Docs, Sheets, and Slides APIs are what make structural extraction work. Without
 them the product falls back to plain-text export and says so in the file list.
@@ -35,9 +38,10 @@ In **APIs & Services → OAuth consent screen**:
 - Privacy policy URL: `<ORIGIN>/privacy`
 - Terms of service URL: `<ORIGIN>/terms`
 - Authorized domain: the registrable domain of `<ORIGIN>` (`findanything.dev`).
-- Scopes: exactly one — `https://www.googleapis.com/auth/drive.readonly`. Do not
-  add scopes. The application requests only this one, and adding more would make
-  the consent screen inaccurate.
+- Scopes: exactly one — `https://www.googleapis.com/auth/drive.file`
+  (`lib/google-drive/oauth.ts`). It reaches only files the user picks. Do not add
+  scopes; adding more would make the consent screen inaccurate. Tokens granted
+  earlier under `drive.readonly` are still accepted until they are reconnected.
 
 ## 3. Add each approved tester as a test user
 
@@ -73,29 +77,20 @@ The redirect URI must match the deployed value byte for byte. When
 `NEXT_PUBLIC_SITE_URL`, so a mismatch between those two values is the most likely
 cause of `redirect_uri_mismatch`.
 
-## 5. Restricted-scope verification (later, deliberately not started)
+## 5. Verification
 
-`drive.readonly` is a **restricted** scope. Publishing the app requires Google
-verification plus a security assessment. When the beta is ready to open:
-
-1. Record a demonstration video showing sign-in, the consent screen, and exactly
-   how the Drive data is used in-product.
-2. Ensure the homepage at the verified domain explains the Drive scope use, and
-   that the privacy policy is reachable at `<ORIGIN>/privacy`.
-3. Submit for verification from the OAuth consent screen and answer Google's
-   scope-justification questions.
-4. Complete the CASA assessment tier Google assigns for restricted scopes,
-   including remediation and annual reassessment.
-5. Only after Google grants verification: switch publishing status to
-   **In production**, then remove the internal invite gate (one change in
-   `lib/beta/access-gate.ts`).
-
-Until step 5 completes, no product surface may say or imply that Google has
-verified or approved the application.
+`drive.file` is a non-sensitive scope, so restricted-scope verification and the
+CASA security assessment do not apply (they did for the earlier `drive.readonly`
+design; that submission pack is kept in `docs/history/` for reference).
+Brand verification is still pending, so Google may show its unverified-app
+notice. To complete it, keep the homepage, privacy policy (`<ORIGIN>/privacy`),
+and terms (`<ORIGIN>/terms`) accurate at the verified domain and submit from the
+OAuth consent screen. Until Google grants it, no product surface may say or
+imply that Google has verified or approved the application.
 
 ## What must never be done in a hurry
 
-- Do not add scopes beyond `drive.readonly` to make a demo easier.
+- Do not add scopes beyond `drive.file` to make a demo easier.
 - Do not switch publishing status to production to avoid the test-user limit;
   that submits the app for review with whatever state it is in.
 - Do not create a second Cloud project for the custom domain. Add the origin and

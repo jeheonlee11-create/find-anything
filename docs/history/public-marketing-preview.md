@@ -1,3 +1,5 @@
+> Historical runbook from before the `drive.file` pivot; its scope steps no longer apply.
+
 # Public marketing preview
 
 This revision prepares a public marketing surface while leaving every product

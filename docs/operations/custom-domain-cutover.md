@@ -43,7 +43,7 @@ Console.
    `https://findanything.dev` and the redirect URI
    `https://findanything.dev/api/connectors/google-drive/callback` to the existing
    OAuth client. Keep the old entries during the transition. See
-   [FOUNDER_GOOGLE_CONSOLE_ACTIONS.md](FOUNDER_GOOGLE_CONSOLE_ACTIONS.md).
+   [Google Cloud Console actions](google-console-actions.md).
 5. Export the DNS records for `findanything.dev` exactly as they stand now, and
    save the Pages project's current deployment ID. These are what a rollback
    restores.

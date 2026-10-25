@@ -51,7 +51,8 @@ is stable and testable.
   written, and released before the slot is reused.
 - **Memory admission.** Slots alone do not bound memory (20 × 50 MB is 1 GB in
   a 128 MB isolate), so the pool also admits by aggregate in-flight bytes
-  (≤32 MB, from the `sizeBytes` discovery already stores). Files above a 24 MB
+  (≤32 MB, from the `sizeBytes` discovery already stores; Google-native files,
+  which have no size, reserve their 4 MB export cap). Files above a 24 MB
   per-file cap are settled with a distinct counted status
   (`FILE_TOO_LARGE_TO_EXTRACT`, surfaced as `indexing_jobs.oversized_count`)
   instead of being re-admitted into the same fatal window every hop.

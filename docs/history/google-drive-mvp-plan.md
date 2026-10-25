@@ -1,3 +1,6 @@
+> Historical plan from the first connector build. The shipped design is in
+> [docs/architecture.md](../architecture.md).
+
 # Google Drive MVP technical plan
 
 The Phase 1 server implementation now exists, but the connector is not live until the manual Google Cloud and hosted-secret setup below is completed and an end-to-end sync succeeds.

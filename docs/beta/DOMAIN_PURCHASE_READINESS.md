@@ -48,14 +48,14 @@ there is no separate app hostname):
 - Authorized origin: `https://findanything.dev`
 - Authorized redirect: `https://findanything.dev/api/connectors/google-drive/callback`
 
-The consent screen must identify Find Anything, list accurate privacy/support contacts, declare the read-only scope, and include each private-beta Google account as a test user while the app remains in testing mode. Google has not verified or approved the application; restricted-scope verification is pending. The full founder-only checklist is in [FOUNDER_GOOGLE_CONSOLE_ACTIONS.md](../FOUNDER_GOOGLE_CONSOLE_ACTIONS.md).
+The consent screen must identify Find Anything, list accurate privacy/support contacts, declare the `drive.file` scope, and include each private-beta Google account as a test user while the app remains in testing mode. Google has not verified or approved the application; restricted-scope verification is pending. The full founder-only checklist is in [Google Cloud Console actions](../operations/google-console-actions.md).
 
 ## Post-purchase sequence
 
 `findanything.dev` is currently served by a separate Cloudflare Pages project
 built from `marketing-site/`, so this is a release-and-reattach operation. The
 precise, ordered sequence with verification and rollback lives in
-[CUSTOM_DOMAIN_CUTOVER.md](../CUSTOM_DOMAIN_CUTOVER.md). In outline:
+[custom-domain cutover](../operations/custom-domain-cutover.md). In outline:
 
 1. Release `findanything.dev` from the Pages project, then attach it to the existing Sites project—do not create a new project.
 2. Add the exact records returned by Sites.

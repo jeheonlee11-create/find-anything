@@ -136,7 +136,7 @@ test("Week 1 workspace isolation, expiry refresh, callback state, and revocation
         ),
         "utf8",
       ),
-      readFile(new URL("../docs/MVP_SCOPE.md", import.meta.url), "utf8"),
+      readFile(new URL("../docs/company/mvp-scope.md", import.meta.url), "utf8"),
     ]);
   assert.match(workspaceRepo, /memberships\.userId/);
   assert.match(workspaceRepo, /memberships\.workspaceId/);

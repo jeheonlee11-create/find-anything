@@ -1,3 +1,5 @@
+> Historical priority list from July 2026; several items have since shipped or changed.
+
 # Public-beta engineering priorities
 
 Ranked by security impact, user value, and dependency order after auditing the current repository.

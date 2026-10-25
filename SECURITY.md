@@ -1,20 +1,24 @@
-# Security policy
+# Security
 
-## Current status
+Find Anything stores OAuth tokens for, and text extracted from, the Google
+Drive files users choose to share with it. The controls that protect them are
+listed with their code locations in [docs/threat-model.md](docs/threat-model.md).
+The product has had no external security review or penetration test and claims
+no certification.
 
-Security program in development. This deployment contains synthetic demo data only and claims no certification or regulatory compliance.
+## Reporting a vulnerability
 
-## Production invariants
+Contact the repository owner privately through GitHub; there is no dedicated
+security inbox yet. Do not include real secrets or customer content, and do not
+test against accounts that are not yours.
 
-- Enforce actor, workspace, and source permissions on every read and mutation.
-- Fail closed on unknown, revoked, or stale permission state.
-- Keep OAuth refresh tokens server-side, envelope-encrypted, and out of logs.
-- Treat filenames and extracted content as untrusted input.
-- Never execute or follow instructions embedded in retrieved files.
-- Verify OAuth state/PKCE, webhook signatures, CSRF protections, request limits, and deletion jobs.
+## Invariants
 
-Report vulnerabilities privately to the support contact once configured; do not include secrets or customer content.
-
-## Known dependency finding
-
-The July 2026 production-dependency audit reports two moderate PostCSS advisories through Next.js. The package manager proposes a breaking framework downgrade, so no unsafe forced fix was applied. Re-audit and update Next.js/PostCSS through a compatible upstream release before public beta.
+- Every read and mutation checks the actor's workspace membership or a
+  workspace-scoped API key.
+- Search re-checks Drive access at query time and fails closed.
+- Tokens are encrypted at rest, bound to their row, and never logged or
+  returned to the browser.
+- Disconnect revokes the Google grant first and deletes connector data only
+  after Google confirms, in one transaction.
+- Retrieved file content is treated as untrusted data, never as instructions.

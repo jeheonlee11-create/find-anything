@@ -51,29 +51,21 @@ access was denied, so nothing else has to be restructured. Platform identity,
 workspace membership checks, OAuth state/PKCE validation, and token encryption
 are separate concerns and must stay.
 
-## Restricted-scope verification (not yet done)
+## Google verification status
 
 The connector requests exactly one scope,
-`https://www.googleapis.com/auth/drive.readonly`, which Google classifies as
-**restricted**. The OAuth client is in **testing** mode and Google has **not**
-verified or approved the application. Nothing in the product may claim otherwise.
+`https://www.googleapis.com/auth/drive.file` (`lib/google-drive/oauth.ts`): the
+app can read only the files a user selects in Google's picker. That scope is
+non-sensitive, so the restricted-scope review and CASA assessment required by the
+earlier `drive.readonly` design no longer apply. Google brand verification is
+still pending and nothing in the product may claim otherwise; the homepage says
+so directly.
 
-While in testing mode, each approved tester's Google account must be added
-individually as a test user in the Google Cloud Console. That is a manual founder
-action — see
-[FOUNDER_GOOGLE_CONSOLE_ACTIONS.md](FOUNDER_GOOGLE_CONSOLE_ACTIONS.md).
-
-Work required before the invite gate can be lifted for the public:
-
-- Publish the OAuth consent screen and submit restricted-scope verification with
-  a demonstration video, a homepage that states the scope use, and a published
-  privacy policy at the verified domain.
-- Pass the CASA (Cloud Application Security Assessment) tier required for
-  `drive.readonly`, including remediation and annual reassessment.
-- Budget for review latency: restricted-scope verification is measured in weeks,
-  not days, and can require several rounds.
-- Only after verification is granted should `BETA_ACCESS_MODE` change and the
-  invite gate be removed.
+`BETA_ACCESS_MODE` decides who may connect: `invited` admits only approved
+invitations, `open` admits any signed-in user (suspended users stay blocked).
+If the OAuth client is in Testing mode, each tester's Google account must also be
+added as a test user — see
+[Google Cloud Console actions](google-console-actions.md).
 
 ## Required production environment values
 
@@ -122,4 +114,4 @@ database only — all migrations in `drizzle/` are forward-only and additive.
 - Existing users, workspaces, Drive connections, indexes, traces, receipts, and
   access requests are untouched. No schema change was required.
 - `marketing-site/` stays deployed and unmodified until an approved cutover; see
-  [CUSTOM_DOMAIN_CUTOVER.md](CUSTOM_DOMAIN_CUTOVER.md).
+  [custom-domain cutover](custom-domain-cutover.md).
