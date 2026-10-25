@@ -133,8 +133,10 @@ test("confidence is persisted in isolated traces and receipts and returned by RE
   assert.match(audit, /sourceRetrievalId:\s*searchId/);
   assert.match(audit, /actorIdentity:\s*input\.actor\.actorId/);
   assert.match(browserRoute, /actorWorkspace/);
-  assert.match(browserRoute, /conflictsForFiles/);
-  assert.match(browserRoute, /unresolvedConflictCount/);
+  const pipeline = await readFile(new URL("../lib/workspace-search/run-search.ts", import.meta.url), "utf8");
+  assert.match(browserRoute, /runWorkspaceSearch/);
+  assert.match(pipeline, /conflictsForFiles/);
+  assert.match(pipeline, /unresolvedConflictCount/);
   assert.match(apiRoute, /requireWorkspaceApiKey/);
   assert.match(apiRoute, /WORKSPACE_FORBIDDEN/);
   assert.match(serialization, /retrievalConfidence/);

@@ -19,8 +19,15 @@ export interface DriveFileMetadata {
   size?: string;
   trashed?: boolean;
 }
-const fields =
+const INVENTORY_FIELDS =
   "nextPageToken,incompleteSearch,files(id,name,mimeType,modifiedTime,parents,owners(displayName,emailAddress),permissions(id,type,role,emailAddress,domain,allowFileDiscovery,deleted),webViewLink,md5Checksum,size,trashed)";
+/**
+ * The query-time permission re-check needs only which file IDs the connected
+ * account can still reach. Asking Drive for IDs alone keeps that per-search
+ * listing small without skipping it: every page is still fetched, and an
+ * incomplete listing still fails the search closed.
+ */
+export const PERMISSION_CHECK_FIELDS = "nextPageToken,incompleteSearch,files(id)";
 async function googleFetch(url: string, accessToken: string) {
   let response: Response | null = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -60,6 +67,8 @@ export interface DriveInventoryOptions {
    * returns the cursor to resume from — never a thrown hop.
    */
   shouldStop?: () => boolean;
+  /** Drive `fields` mask; defaults to the full metadata the indexer stores. */
+  fields?: string;
 }
 export async function listAllDriveFiles(
   accessToken: string,
@@ -80,7 +89,7 @@ export async function listAllDriveFiles(
     const url = new URL("https://www.googleapis.com/drive/v3/files");
     url.search = new URLSearchParams({
       pageSize: "1000",
-      fields,
+      fields: options.fields ?? INVENTORY_FIELDS,
       q: "trashed = false",
       spaces: "drive",
       ...(pageToken ? { pageToken } : {}),

@@ -17,7 +17,8 @@
     "beta:report": "node scripts/generate-beta-readiness-report.mjs",
     "security:scan": "node scripts/secret-scan.mjs",
     "beta:check": "npm run typecheck && npm run lint && npm run db:validate && npm run security:scan && npm audit --audit-level=high && npm run test && npm run beta:report",
-    "demo:seed": "node scripts/demo-seed.mjs"
+    "demo:seed": "node scripts/demo-seed.mjs",
+    "benchmark:search": "node scripts/benchmark-search.mjs"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",

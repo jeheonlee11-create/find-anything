@@ -1,19 +1,12 @@
 import { NextResponse } from "next/server";
 import { isAuthFailure, isDemoWorkspace, requireApiActor } from "@/lib/auth/api-authorization";
 import { actorWorkspace } from "@/lib/workspaces/repository";
-import {
-  searchWorkspaceFiles,
-  type WorkspaceFileType,
-  type WorkspaceSearchMode,
-} from "@/lib/workspace-search/core";
-import { indexedWorkspaceFiles, workspaceCoverageRows } from "@/lib/workspace-search/repository";
+import type { WorkspaceFileType, WorkspaceSearchMode } from "@/lib/workspace-search/core";
+import { runWorkspaceSearch } from "@/lib/workspace-search/run-search";
 import { persistSearchAudit } from "@/lib/workspace-search/audit";
-import { connectorForActor, latestSyncForConnector } from "@/lib/google-drive/repository";
-import { currentAuthorizedDriveSourceIds } from "@/lib/google-drive/permission";
+import { connectorForActor } from "@/lib/google-drive/repository";
 import { connectorSearchAccess, permanentConnectorFailure } from "@/lib/google-drive/connector-health";
 import { rateLimit, recordBetaEvent } from "@/lib/beta/repository";
-import { calculateRetrievalConfidence } from "@/lib/workspace-search/confidence";
-import { conflictsForFiles, unresolvedConflictCount } from "@/lib/conflicts/repository";
 const fileTypes = new Set<WorkspaceFileType>([
     "all",
     "docs",
@@ -32,8 +25,7 @@ export async function POST(
   if (!(await rateLimit(actor.actorId, "workspace_search", 60, 60))) return NextResponse.json({ error: { code: "RATE_LIMITED", message: "Search limit reached. Please retry in one minute." } }, { status: 429 });
   const startedAt = Date.now();
   try {
-    const { workspaceId } = await params,
-      authorizationDone = Date.now();
+    const { workspaceId } = await params;
     if (!(await actorWorkspace(actor.actorId, workspaceId)))
       return NextResponse.json(
         {
@@ -44,6 +36,7 @@ export async function POST(
         },
         { status: 404 },
       );
+    const authorizationDone = Date.now();
     const body = (await request.json().catch(() => ({}))) as Record<
         string,
         unknown
@@ -68,67 +61,23 @@ export async function POST(
         },
         { status: 409 },
       );
-    const demoSync = isDemoWorkspace(workspaceId)
-        ? await latestSyncForConnector(connector.id)
-        : null,
-      permissionInventory = isDemoWorkspace(workspaceId)
-        ? { sourceIds: undefined, filesDiscovered: demoSync?.filesDiscovered ?? 0, paginationComplete: demoSync?.paginationComplete ?? false }
-        : await currentAuthorizedDriveSourceIds(connector),
-      files = await indexedWorkspaceFiles(
+    const { response, stageLatency } = await runWorkspaceSearch({
         workspaceId,
-        permissionInventory.sourceIds,
-      ),
-      coverageRows = await workspaceCoverageRows(workspaceId, permissionInventory.sourceIds),
-      filesLoaded = Date.now(),
-      detectedConflicts = await conflictsForFiles(workspaceId, files.map((file) => file.id)),
-      conflictsLoaded = Date.now(),
-      unresolvedFileIds = new Set(detectedConflicts.filter((item) => item.status === "unresolved").flatMap((item) => [item.leftFileId, item.rightFileId])),
-      authoritativeFileIds = new Set(detectedConflicts.filter((item) => item.status === "authoritative_source" && item.decision?.authoritativeFileId).map((item) => String(item.decision.authoritativeFileId))),
-      response = searchWorkspaceFiles({
-        workspaceId,
-        files,
+        connector,
+        demo: isDemoWorkspace(workspaceId),
         query,
         mode,
         fileType,
         cursor,
         pageSize,
-        permissionContext: {
-          authorizedFilesDiscovered: permissionInventory.filesDiscovered,
-          paginationComplete: permissionInventory.paginationComplete,
-          lastSuccessfulSyncAt: connector.lastSyncAt,
-          knownRemovedOrUnauthorized: demoSync?.filesRemoved ?? 0,
-        },
-        coverageRows,
-        rankingContext: { unresolvedConflictFileIds: unresolvedFileIds, authoritativeFileIds, conflictAssessmentComplete: true },
       }),
-      resultIds = new Set(response.results.map((result) => result.id));
-    response.conflicts = detectedConflicts.filter((item) => resultIds.has(item.leftFileId) || resultIds.has(item.rightFileId));
-    const conflictCount = unresolvedConflictCount(response.conflicts);
-    response.confidence = calculateRetrievalConfidence({
-      coverage: response.coverage,
-      results: response.results,
-      permissionDecisionCount: response.diagnostics.permissionDecisions.length,
-      connector: { searched: 1, expectedConfigured: 1 },
-      unresolvedConflictCount: conflictCount,
-      conflictAssessmentComplete: true,
-      retrievalMode: "literal",
-    });
-    const confidenceDone = Date.now(),
-      matchingDone = confidenceDone,
       audit = await persistSearchAudit({
         actor,
         workspaceId,
         response,
         filters: { fileType, cursor, pageSize },
         startedAt,
-        stageLatency: {
-          authorizationMs: authorizationDone - startedAt,
-          permissionInventoryMs: filesLoaded - authorizationDone,
-          loadFilesMs: filesLoaded - authorizationDone,
-          conflictLookupMs: conflictsLoaded - filesLoaded,
-          matchingMs: matchingDone - conflictsLoaded,
-          confidenceMs: confidenceDone - matchingDone,
-        },
+        stageLatency: { authorizationMs: authorizationDone - startedAt, ...stageLatency },
         correlationId: requestId,
       });
     const safeTerms = query.toLocaleLowerCase().split(/\s+/).filter((term) => /^[a-z][a-z'-]{1,30}$/.test(term)).slice(0, 8);

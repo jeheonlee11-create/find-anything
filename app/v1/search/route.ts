@@ -1,18 +1,11 @@
 import { NextResponse } from "next/server";
 import { requireWorkspaceApiKey } from "@/lib/api/auth";
-import { indexedWorkspaceFiles, workspaceCoverageRows } from "@/lib/workspace-search/repository";
-import {
-  searchWorkspaceFiles,
-  type WorkspaceFileType,
-  type WorkspaceSearchMode,
-} from "@/lib/workspace-search/core";
+import type { WorkspaceFileType, WorkspaceSearchMode } from "@/lib/workspace-search/core";
+import { runWorkspaceSearch } from "@/lib/workspace-search/run-search";
 import { persistSearchAudit } from "@/lib/workspace-search/audit";
 import { connectorForWorkspace } from "@/lib/google-drive/repository";
-import { currentAuthorizedDriveSourceIds } from "@/lib/google-drive/permission";
 import { connectorSearchAccess, permanentConnectorFailure } from "@/lib/google-drive/connector-health";
 import { isDemoWorkspace } from "@/lib/auth/api-authorization";
-import { calculateRetrievalConfidence } from "@/lib/workspace-search/confidence";
-import { conflictsForFiles, unresolvedConflictCount } from "@/lib/conflicts/repository";
 export async function POST(request: Request) {
   const requestId = request.headers.get("x-request-id") || crypto.randomUUID(),
     principal = await requireWorkspaceApiKey(request);
@@ -69,71 +62,35 @@ export async function POST(request: Request) {
       },
       { status: 409 },
     );
-  let permissionInventory;
-  try {
-    permissionInventory = isDemoWorkspace(principal.workspaceId)
-      ? { sourceIds: undefined, filesDiscovered: 5, paginationComplete: true }
-      : await currentAuthorizedDriveSourceIds(connector);
-  } catch (error) {
-    const permanent = permanentConnectorFailure(error);
-    if (permanent)
-      return NextResponse.json(
-        { error: { ...permanent, requestId } },
-        { status: 409, headers: { "cache-control": "no-store", "x-request-id": requestId } },
-      );
-    return NextResponse.json(
-      {
-        error: {
-          code: "PERMISSION_REVALIDATION_FAILED",
-          message:
-            "Drive permissions could not be verified, so no results were returned.",
-          requestId,
-        },
-      },
-      {
-        status: 503,
-        headers: { "cache-control": "no-store", "x-request-id": requestId },
-      },
-    );
-  }
   const mode = body.mode === "all" ? "all" : "best",
     fileType = body.fileType ?? "all",
-    files = await indexedWorkspaceFiles(
-      principal.workspaceId,
-      permissionInventory.sourceIds,
-    ),
-    coverageRows = await workspaceCoverageRows(principal.workspaceId, permissionInventory.sourceIds),
-    detectedConflicts = await conflictsForFiles(principal.workspaceId, files.map((file) => file.id)),
-    unresolvedFileIds = new Set(detectedConflicts.filter((item) => item.status === "unresolved").flatMap((item) => [item.leftFileId, item.rightFileId])),
-    authoritativeFileIds = new Set(detectedConflicts.filter((item) => item.status === "authoritative_source" && item.decision?.authoritativeFileId).map((item) => String(item.decision.authoritativeFileId))),
-    response = searchWorkspaceFiles({
+    headers = { "cache-control": "no-store", "x-request-id": requestId };
+  let search;
+  try {
+    search = await runWorkspaceSearch({
       workspaceId: principal.workspaceId,
-      files,
+      connector,
+      demo: isDemoWorkspace(principal.workspaceId),
       query: body.query,
       mode,
       fileType,
       cursor: body.cursor,
       pageSize: body.pageSize,
-      permissionContext: {
-        authorizedFilesDiscovered: permissionInventory.filesDiscovered,
-        paginationComplete: permissionInventory.paginationComplete,
-        lastSuccessfulSyncAt: connector.lastSyncAt,
+    });
+  } catch (error) {
+    const google = error instanceof Error && error.message.startsWith("GOOGLE_"),
+      permanent = google ? permanentConnectorFailure(error) : null;
+    if (permanent) return NextResponse.json({ error: { ...permanent, requestId } }, { status: 409, headers });
+    return NextResponse.json(
+      {
+        error: google
+          ? { code: "PERMISSION_REVALIDATION_FAILED", message: "Drive permissions could not be verified, so no results were returned.", requestId }
+          : { code: "SEARCH_UNAVAILABLE", message: "Workspace search is temporarily unavailable.", requestId },
       },
-      coverageRows,
-      rankingContext: { unresolvedConflictFileIds: unresolvedFileIds, authoritativeFileIds, conflictAssessmentComplete: true },
-    }),
-    resultIds = new Set(response.results.map((result) => result.id));
-  response.conflicts = detectedConflicts.filter((item) => resultIds.has(item.leftFileId) || resultIds.has(item.rightFileId));
-  const conflictCount = unresolvedConflictCount(response.conflicts);
-  response.confidence = calculateRetrievalConfidence({
-    coverage: response.coverage,
-    results: response.results,
-    permissionDecisionCount: response.diagnostics.permissionDecisions.length,
-    connector: { searched: 1, expectedConfigured: 1 },
-    unresolvedConflictCount: conflictCount,
-    conflictAssessmentComplete: true,
-    retrievalMode: "literal",
-  });
+      { status: 503, headers },
+    );
+  }
+  const { response, stageLatency } = search;
   const audit = await persistSearchAudit({
       actor: {
         actorId: principal.actorId,
@@ -147,6 +104,7 @@ export async function POST(request: Request) {
         pageSize: body.pageSize ?? 20,
       },
       startedAt,
+      stageLatency,
       correlationId: requestId,
     });
   return NextResponse.json(
@@ -156,6 +114,6 @@ export async function POST(request: Request) {
       requestId,
       retrieval: { kind: "literal", semanticPaused: true },
     },
-    { headers: { "cache-control": "no-store", "x-request-id": requestId } },
+    { headers },
   );
 }
