@@ -20,6 +20,7 @@ import {
   reconcileInterruptedRun,
 } from "@/lib/google-drive/sync-lifecycle";
 import { D1_MAX_STATEMENTS_PER_BATCH } from "@/lib/indexing/d1-limits";
+import { takeOAuthState } from "@/lib/google-drive/oauth-state";
 import type { SubrequestBudget } from "@/lib/indexing/subrequest-budget";
 import {
   discoveredMetadataStatements,
@@ -235,16 +236,9 @@ export async function saveOAuthState(input: {
     createdAt = new Date().toISOString();
   await db.insert(oauthStates).values({ ...input, createdAt });
 }
+/** Single-use: see takeOAuthState. */
 export async function consumeOAuthState(stateHash: string) {
-  const db = await getDb();
-  const row = await db
-    .select()
-    .from(oauthStates)
-    .where(eq(oauthStates.stateHash, stateHash))
-    .get();
-  if (row)
-    await db.delete(oauthStates).where(eq(oauthStates.stateHash, stateHash));
-  return row;
+  return takeOAuthState(await getDb(), stateHash);
 }
 export async function upsertConnector(input: typeof connectors.$inferInsert) {
   const db = await getDb();
