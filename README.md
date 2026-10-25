@@ -1,123 +1,83 @@
 # Find Anything
 
-## Open the updated local website
+Permission-aware exact search over the Google Drive files you choose to share with it, with page, slide, and cell citations and a receipt for every search.
 
-[Open Find Anything](http://localhost:3000/app)
+[![CI](https://github.com/jeheonlee11-create/find-anything/actions/workflows/ci.yml/badge.svg)](https://github.com/jeheonlee11-create/find-anything/actions/workflows/ci.yml)
+Public beta at [findanything.dev](https://findanything.dev). Google brand verification is still pending, so Google may show its unverified-app notice when you connect.
 
-You can also double-click `Open Find Anything.webloc` in this project folder. The stable `/app` address lists your workspaces, so it does not depend on a workspace ID.
+![A frame from the product film, showing the synthetic demo workspace](public/find-anything-demo-poster.png)
 
-Find Anything is a permission-aware retrieval product for exact search across authorized Google Drive files.
+## Why
 
-The repository currently provides:
+When a person or an AI agent searches a team's documents, the answer is only as trustworthy as the search behind it: was every relevant file searched, was any file the user can no longer open used anyway, and where exactly did each fact come from? Find Anything answers those questions for every search. It searches only the files a user picked, re-checks access with Google at query time, cites the exact location of each match, and records what was searched, what was excluded, and why.
 
-- an interactive landing-page playground backed by a 105-record synthetic corpus;
-- deterministic full-text retrieval that returns no results for unrelated input;
-- separate Search Results, Coverage Report, and Retrieval Trace layers;
-- structural citations for documents, slides, PDFs, and spreadsheets;
-- 20-result pagination and Find All behavior across more than three matches;
-- exportable JSON retrieval records;
-- typed retrieval, permission, file, evidence, trace, coverage, and receipt contracts;
-- prototype REST routes and proposed MCP documentation;
-- Trust, pricing, privacy, legal-review, support, status, onboarding-demo, and developer-documentation routes;
-- health/readiness endpoints and production architecture/security documentation.
-- privacy-safe analytics contracts, protected founder-metrics output, configurable plans, metering and experiment schemas;
-- investor-update generation, customer-discovery workflow, launch checklists, and an editable data room.
+## How it works
 
-Phase 1 now includes real Google OAuth/PKCE routes, encrypted credential persistence, complete Drive inventory pagination, Workspace export/download adapters, PDF page extraction, and durable D1 indexing tables. These are **not live on the hosted site until Google credentials, restricted-scope verification, the encryption key, and D1 migration are configured and an end-to-end sync succeeds**.
-
-It does **not** currently provide query-time Drive permission revalidation, incremental change processing, embeddings, a vector database, immutable receipts, or a production-deployed MCP server. The authenticated local app does provide workspace-isolated retrieval over durable Drive records, durable traces and receipts, and exact structural locations when the corresponding Google Docs, Slides, and Sheets APIs are enabled. The public playground remains synthetic and isolated from authenticated workspace data.
-
-## Stack and deployment
-
-- Next.js 16 and React 19
-- TypeScript
-- vinext and Vite
-- OpenAI Sites with Cloudflare Worker-compatible output
-- Cloudflare D1/Drizzle schema and migration for the Phase 1 connector
-
-## Commands
-
-```bash
-npm install
-npm run lint
-npm run typecheck
-npm test
-npm run build
-npm run dev
+```mermaid
+flowchart LR
+  A["Connect<br/>OAuth + PKCE, drive.file scope"] --> B["Indexing job<br/>checkpointed continuation hops"]
+  B --> C[("Cloudflare D1<br/>files, units, FTS5 index")]
+  Q["Search<br/>browser, /v1 API, MCP"] --> P["Drive access re-check<br/>fail closed"]
+  P --> C
+  C --> M["Whole-word matching<br/>and itemized ranking"]
+  M --> E["Citations, trace,<br/>and receipt"]
 ```
 
-## Week 1 local setup
+1. **Connect.** The user signs in and grants the `drive.file` scope, so the app can read only the files they select in Google's picker. OAuth uses a hashed, single-use `state` and PKCE; tokens are encrypted at rest and bound to their database row (`lib/google-drive/oauth.ts`, `lib/security/secret-box.ts`).
+2. **Index.** A durable job processes the selected files in short hops that checkpoint and chain on their own, so indexing continues after the tab closes. Docs, Slides, Sheets, and PDFs become text units with structural locations, extracted by local parsers with no LLM (`lib/google-drive/sync.ts`, `lib/indexing/jobs.ts`).
+3. **Search.** Every search first re-lists the Drive files the account can reach and drops anything no longer in that list; if the check fails, the search returns an error and no results. An FTS5 index in D1 narrows candidates, then the matcher applies whole-word rules to the stored text and ranks with itemized factors (`lib/workspace-search/run-search.ts`, `search-index.ts`, `core.ts`).
+4. **Evidence.** Results cite the page, slide, cell, or paragraph with a content hash. Each search stores a trace (stages, timings, decisions) and a receipt (counts and hashes) that the UI, the `/v1` API, and the MCP server can read back.
 
-1. Install Node 22+ and run `npm ci`.
-2. Copy `.env.example` to `.env.local` and replace placeholders locally only.
-3. Create a Google Cloud project, enable the Drive API, configure the OAuth consent screen and test users, then create an OAuth Web client.
-4. For local testing, register `http://localhost:3000/api/connectors/google-drive/callback` and set it as `GOOGLE_REDIRECT_URI`.
-5. Generate a 32-byte `TOKEN_ENCRYPTION_KEY` as 64 hexadecimal characters or 43-character base64url.
-6. Generate the D1 migration with `npm run db:generate`; the committed migration is under `drizzle/`.
-7. Run `npm run dev`, sign in through the Sites authentication boundary, create a workspace, and connect Drive.
+More detail: [docs/architecture.md](docs/architecture.md), [docs/api.md](docs/api.md).
 
-Plain local vinext does not emulate the Sites identity headers or production D1 automatically. Use a Sites preview/deployment for the complete hosted authentication/OAuth flow.
+## Design decisions and trade-offs
 
-## Google OAuth local verification
+- **Fail closed on permissions instead of caching them.** Search re-checks Drive access on every query, which costs one Drive listing per search (IDs only). A cache would be faster but could serve a file the user lost access to moments ago. Stored rows missing from the listing are excluded and counted, never named.
+- **D1 and Workers instead of a separate search service.** One deployable unit and one database keep the beta simple to run. The cost is D1's limits (99 bound parameters per statement, statement batches instead of interactive transactions, a per-invocation subrequest budget), which shape the indexer: statement sizes are derived from the schema, and indexing runs as short, budgeted hops.
+- **Leases and conditional writes for job state.** Each indexing hop holds a lease, and its commit only applies while it still holds it, so a hop that outlived its lease cannot overwrite a newer one or fork the chain. Counters can only increase. One active job per connector is enforced by a partial unique index.
+- **FTS5 as a candidate generator, not the judge.** The full-text index finds files that might match; the final whole-word decision is made on the stored text. The tokenizer accepts a superset of what the matcher accepts, so a stale index entry can add a candidate but cannot change a result, and tests check that both paths return identical results.
 
-- Scope requested: `https://www.googleapis.com/auth/drive.readonly`.
-- Local callback: `http://localhost:3000/api/connectors/google-drive/callback`.
-- Set `GOOGLE_REDIRECT_URI` to that exact value in `.env.local` and register the same URI on the Google OAuth Web client.
-- Keep `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `TOKEN_ENCRYPTION_KEY` in `.env.local`; never commit their values.
-- Local vinext still needs a D1-compatible development binding and authenticated-user headers, so the callback setting alone does not emulate the complete Sites environment.
+## Results
 
-## Google OAuth production setup
+- **Tests:** 264 `node:test` tests pass (`npm test`). They include repository-level tests that apply every migration to an in-memory SQLite database and run the real Drizzle statements: the FTS triggers, the indexed search path against the old full-corpus path, single-use OAuth state, and the one-transaction disconnect.
+- **Search cost.** `npm run benchmark:search -- <files> <unitsPerFile>` builds a synthetic workspace in in-process SQLite and times the old path (load every unit, match in memory) against the current one (FTS5 candidates, then only units containing a term). Both must return identical results or the script fails. Median of 7 runs on an Apple M2 Pro, Node 24.16; this excludes D1 network latency and the Drive permission listing, which both paths share.
 
-- Attach and activate a custom domain in Sites before registering the production callback with Google.
-- The site and the product share one origin. The production callback is `<NEXT_PUBLIC_SITE_URL>/api/connectors/google-drive/callback` — for the planned domain, `https://findanything.dev/api/connectors/google-drive/callback`.
-- `GOOGLE_REDIRECT_URI` is optional in production: when unset it derives from `NEXT_PUBLIC_SITE_URL`. Setting it explicitly always wins.
-- Configure the production `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `TOKEN_ENCRYPTION_KEY` as hosted server secrets.
-- Because `drive.readonly` is restricted, complete Google verification and any required security assessment before public use.
+  | Workspace | Query | Old path | Indexed path | Units loaded (old / new) |
+  |---|---|---|---|---|
+  | 2,000 files, 40,000 units | rare phrase (20 matches) | 103 ms | 6 ms | 40,000 / 20 |
+  | 2,000 files, 40,000 units | word in every file | 201 ms | 82 ms | 40,000 / 8,235 |
+  | 10,000 files, 100,000 units | rare phrase (100 matches) | 286 ms | 30 ms | 100,000 / 100 |
+  | 10,000 files, 100,000 units | word in almost every file | 580 ms | 329 ms | 100,000 / 20,590 |
+  | 10,000 files, 100,000 units | no match | 224 ms | 26 ms | 100,000 / 0 |
 
-See [Week 1 scope](docs/MVP_SCOPE.md), [Google Drive setup](docs/google-drive-mvp.md), and [manual setup](MANUAL_SETUP.md).
+## Limitations and next steps
 
-## Routes
+- **Search cost still grows with matches.** A word that appears in most files still loads most of their units; an empty query (browse) loads up to five units per file; and the workspace filter runs after the FTS match, so a term common across many workspaces scans all their matches. Next: per-workspace FTS terms and paging candidates in SQL.
+- **One Drive listing per search.** The permission re-check is deliberately uncached, so search latency includes a Drive API call (one per 1,000 picked files).
+- **No semantic search.** Matching is literal and whole-word; synonyms and paraphrases do not match.
+- **Change detection runs on re-sync**, not on the Drive Changes push feed.
+- **Not externally reviewed.** No penetration test or security assessment has been done. `npm audit --omit=dev` reports 6 advisories (1 critical in `next`, 4 high, 1 moderate) that need a Next.js upgrade and a retest.
+- **D1 export does not support virtual tables**, so `wrangler d1 export` will not work on this database while the FTS table exists.
+- **Some tests still assert on source text** (older suites); new behavior is covered by behavioral tests, but not every route has one.
 
-The public site and the authenticated product share one origin: public pages at
-`/`, the product under `/app`. See [the unified product site](docs/UNIFIED_PRODUCT_SITE.md).
+## Run it
 
-- `/` — product site, with **Connect Google Drive** as its primary action
-- `/connect` — the one entry point: platform identity, then the invite gate, then workspace, then Drive OAuth
-- `/beta/access-required` — honest invite-only fallback and the real request-access form
-- `/settings` — authenticated account, workspace, and Drive settings including disconnect-and-delete
-- `/docs` — REST and proposed MCP contracts
-- `/trust` — current and planned trust, privacy, and security controls
-- `/pricing`, `/privacy`, `/terms`, `/support`, `/status` — public beta-preparation surfaces
-- `/app` — authenticated workspace creation and listing
-- `/workspaces`, `/workspaces/:workspaceId` — compatibility redirects into `/app`
-- `/app/workspaces/:workspaceId` — member-authorized Drive connection, indexing status, and file inventory
-- `/api/workspaces` — authenticated workspace list/create
-- `/api/workspaces/:workspaceId` — member-authorized workspace dashboard data
-- `/api/workspaces/:workspaceId/google-drive` — connection status, authorized files, and owner-only disconnect
-- `/api/connectors/google-drive/connect` — workspace-scoped OAuth start
-- `/api/connectors/google-drive/callback` — state/PKCE validated OAuth callback
-- `/api/connectors/google-drive/sync` — workspace-scoped inventory and extraction
-- `/api/health`, `/api/readiness` — actual demo health and production dependency state
-- `/api/retrieval/search` — ranked sample-corpus retrieval
-- `/api/retrieval/find-all` — paginated sample-corpus retrieval
-- `/api/retrieval/traces/:traceId` — generated prototype trace
-- `/api/retrieval/receipts/:receiptId` — generated prototype record
-- `/api/workspaces/:workspaceId/coverage` — sample coverage
-- `/api/connectors/google-drive/connect` — explicit 501 placeholder
-- `/api/connectors/google-drive/sync` — explicit 501 placeholder
+```bash
+git clone https://github.com/jeheonlee11-create/find-anything.git
+cd find-anything
+npm ci
+npm run typecheck && npm run lint && npm test
+npm run dev                     # http://localhost:3000
+```
 
-## Production plans
+Tests need no accounts or secrets. Connecting a real Drive needs a Google Cloud OAuth client, a Picker API key, and a 32-byte `TOKEN_ENCRYPTION_KEY` in `.env.local` (copy `.env.example`); the full sign-in flow needs the hosted environment. See [docs/setup.md](docs/setup.md).
 
-- [The unified product site](docs/UNIFIED_PRODUCT_SITE.md) — invite-only operation, the connect journey, required production environment values
-- [Founder Google Console actions](docs/FOUNDER_GOOGLE_CONSOLE_ACTIONS.md) — manual, human-only steps
-- [Custom-domain cutover and rollback](docs/CUSTOM_DOMAIN_CUTOVER.md)
-- [Google Drive MVP](docs/google-drive-mvp.md)
-- [Custom-domain setup](docs/custom-domain-setup.md)
-- [Retrieval architecture](docs/retrieval-architecture.md)
-- [Manual production setup](MANUAL_SETUP.md)
-- [Security policy](SECURITY.md) and [threat model](THREAT_MODEL.md)
-- [Tutorial production package](tutorial-video/README.md)
+Main routes: `/` (site), `/connect`, `/app` (product), `/settings` (including disconnect-and-delete), `/v1/*` (API-key REST), `/api/mcp` (MCP), `/api/health`, `/api/readiness`.
 
-`npm audit --omit=dev` currently reports two moderate PostCSS advisories nested beneath Next.js. The suggested automated fix is a breaking downgrade and was not applied; track the upstream Next.js dependency update before public beta.
+## How it was built
 
-Copy `.env.example` to `.env.local` for local URL configuration. Never commit secrets.
+Built by Jeheon Lee with AI coding assistants (Claude Code, OpenAI Codex). I set the direction and design, and verified behavior with the tests and benchmark above.
+
+## License
+
+Copyright (c) 2026 Jeheon Lee. All rights reserved. Source shown for review.
