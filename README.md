@@ -56,7 +56,7 @@ More detail: [docs/architecture.md](docs/architecture.md), [docs/api.md](docs/ap
 - **One Drive listing per search.** The permission re-check is deliberately uncached, so search latency includes a Drive API call (one per 1,000 picked files).
 - **No semantic search.** Matching is literal and whole-word; synonyms and paraphrases do not match.
 - **Change detection runs on re-sync**, not on the Drive Changes push feed.
-- **Not externally reviewed.** No penetration test or security assessment has been done. `npm audit --omit=dev` reports 6 advisories (1 critical in `next`, 4 high, 1 moderate) that need a Next.js upgrade and a retest.
+- **Not externally reviewed.** No penetration test or security assessment has been done. `npm audit --omit=dev` reports 0 advisories after the Next.js 16.4.1 upgrade; the full `npm audit` still reports 4 moderate ones in `drizzle-kit`'s esbuild loader, a dev-only migration CLI with no patched release yet.
 - **D1 export does not support virtual tables**, so `wrangler d1 export` will not work on this database while the FTS table exists.
 - **Some tests still assert on source text** (older suites); new behavior is covered by behavioral tests, but not every route has one.
 
