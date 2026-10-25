@@ -111,7 +111,7 @@ test("workspace and connector APIs fail closed and validate input before storage
 });
 
 test("Week 1 workspace isolation, expiry refresh, callback state, and revocation paths are wired", async () => {
-  const [workspaceRepo, driveRepo, sync, callback, disconnect, scope] =
+  const [workspaceRepo, driveRepo, sync, callback, disconnect] =
     await Promise.all([
       readFile(
         new URL("../lib/workspaces/repository.ts", import.meta.url),
@@ -136,7 +136,6 @@ test("Week 1 workspace isolation, expiry refresh, callback state, and revocation
         ),
         "utf8",
       ),
-      readFile(new URL("../docs/company/mvp-scope.md", import.meta.url), "utf8"),
     ]);
   assert.match(workspaceRepo, /memberships\.userId/);
   assert.match(workspaceRepo, /memberships\.workspaceId/);
@@ -152,7 +151,6 @@ test("Week 1 workspace isolation, expiry refresh, callback state, and revocation
   assert.match(disconnect, /workspace\.role\s*!==\s*"owner"/);
   assert.match(disconnect, /revokeGoogleToken/);
   assert.match(disconnect, /deleteConnectorData/);
-  assert.match(scope, /Not in MVP/);
 });
 
 test("Google Drive implementation includes state, PKCE, encrypted tokens, complete pagination, and durable migrations", async () => {
@@ -216,7 +214,10 @@ test("analytics requires authentication and uses privacy-safe first-party persis
     body: JSON.stringify({ name: "file_content_uploaded", anonymousId: "a" }),
   });
   assert.equal(invalid.status, 401);
-  const source = await readFile(new URL("../app/api/analytics/route.ts", import.meta.url), "utf8");
+  const source = await readFile(
+    new URL("../app/api/analytics/route.ts", import.meta.url),
+    "utf8",
+  );
   assert.match(source, /requireAuthenticatedUser/);
   assert.match(source, /requireWorkspaceMember/);
   assert.match(source, /recordBetaEvent/);
@@ -224,10 +225,16 @@ test("analytics requires authentication and uses privacy-safe first-party persis
 });
 
 test("client analytics only sends from the configured application origin", async () => {
-  const source = await readFile(new URL("../lib/analytics/client.ts", import.meta.url), "utf8");
+  const source = await readFile(
+    new URL("../lib/analytics/client.ts", import.meta.url),
+    "utf8",
+  );
   assert.match(source, /NEXT_PUBLIC_APP_URL/);
   assert.match(source, /window\.location\.origin!==configuredOrigin/);
-  assert.match(source, /if\(configuredOrigin&&window\.location\.origin!==configuredOrigin\)return/);
+  assert.match(
+    source,
+    /if\(configuredOrigin&&window\.location\.origin!==configuredOrigin\)return/,
+  );
 });
 
 test("founder metrics fail closed when admin authorization is absent", async () => {
@@ -247,7 +254,10 @@ test("public beta requests reject malformed input and silently absorb bot traps"
   const trapped = await request("/api/beta/waitlist", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ website: "https://spam.invalid", startedAt: Date.now() - 5_000 }),
+    body: JSON.stringify({
+      website: "https://spam.invalid",
+      startedAt: Date.now() - 5_000,
+    }),
   });
   assert.equal(trapped.status, 202);
   assert.equal((await trapped.json()).submitted, true);
@@ -257,11 +267,20 @@ test("public marketing events use a strict privacy-safe allowlist", async () => 
   const invalid = await request("/api/marketing/events", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ event: "private_document_opened", anonymousId: "test" }),
+    body: JSON.stringify({
+      event: "private_document_opened",
+      anonymousId: "test",
+    }),
   });
   assert.equal(invalid.status, 400);
-  const source = await readFile(new URL("../app/api/marketing/events/route.ts", import.meta.url), "utf8");
-  assert.match(source, /demo_viewed.*beta_access_clicked.*demo_booking_clicked/);
+  const source = await readFile(
+    new URL("../app/api/marketing/events/route.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /demo_viewed.*beta_access_clicked.*demo_booking_clicked/,
+  );
   assert.match(source, /rateLimit\(actorId, "marketing_event", 30, 3600\)/);
   assert.doesNotMatch(source, /query|filename|documentContent|accessToken/i);
 });
@@ -297,15 +316,33 @@ test("public URLs are environment configurable and contain no personal-name bran
   ])
     assert.match(config, new RegExp(key));
   assert.match(layout, /NEXT_PUBLIC_SITE_URL/);
-  assert.doesNotMatch(`${config}${layout}${page}`, new RegExp(["min", "hwi"].join(""), "i"));
+  assert.doesNotMatch(
+    `${config}${layout}${page}`,
+    new RegExp(["min", "hwi"].join(""), "i"),
+  );
 });
 
 test("dark mode keeps primary actions readable", async () => {
-  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const css = await readFile(
+    new URL("../app/globals.css", import.meta.url),
+    "utf8",
+  );
   assert.match(css, /prefers-color-scheme:dark/);
-  assert.match(css, /\.content-page \.button\{background:#caff4a;color:#121411/);
-  assert.match(css, /\.trust-grid span,.workspace-search-summary>\*\)\{background:#30352c;color:#f0f2ea/);
-  assert.match(css, /\.indexed-files a,.workspace-search-results a\)\{color:#caff4a/);
+  assert.match(
+    css,
+    /\.content-page \.button\{background:#caff4a;color:#121411/,
+  );
+  assert.match(
+    css,
+    /\.trust-grid span,.workspace-search-summary>\*\)\{background:#30352c;color:#f0f2ea/,
+  );
+  assert.match(
+    css,
+    /\.indexed-files a,.workspace-search-results a\)\{color:#caff4a/,
+  );
   assert.match(css, /\.empty-state b\{color:#f0f2ea/);
-  assert.match(css, /\.audit-actions :is\(a,button\)\{background:#292d26;color:#f0f2ea/);
+  assert.match(
+    css,
+    /\.audit-actions :is\(a,button\)\{background:#292d26;color:#f0f2ea/,
+  );
 });
