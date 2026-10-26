@@ -37,6 +37,10 @@ More detail: [docs/architecture.md](docs/architecture.md), [docs/api.md](docs/ap
 - **Leases and conditional writes for job state.** Each indexing hop holds a lease, and its commit only applies while it still holds it, so a hop that outlived its lease cannot overwrite a newer one or fork the chain. Counters can only increase. One active job per connector is enforced by a partial unique index.
 - **FTS5 as a candidate generator, not the judge.** The full-text index finds files that might match; the final whole-word decision is made on the stored text. The tokenizer accepts a superset of what the matcher accepts, so a stale index entry can add a candidate but cannot change a result, and tests check that both paths return identical results.
 
+## Queue-based indexer
+
+`queue-worker/` is a separate Cloudflare Worker that moves indexing continuations through Cloudflare Queues instead of self-chaining hops. Failed deliveries retry with exponential backoff (15 s doubling, capped at 15 minutes); messages that exhaust their retries go to a dead-letter queue, whose consumer records a terminal failure on the job instead of letting it hang. A one-minute scheduled reconciler re-enqueues continuations that were committed but never dispatched, for example when the process died in between. Messages carry only job and sequence IDs and an attempt epoch, never tokens, file names, or content, and requests between the Site and the Worker are signed in both directions. It is covered by 20 tests against a simulated queue (`tests/queue-indexing-architecture.test.mjs`) and has a staging configuration. Production still runs the self-chaining hops described above, which need no extra Cloudflare resources during the beta. Design: [docs/indexing-queue-architecture.md](docs/indexing-queue-architecture.md).
+
 ## Results
 
 - **Tests:** 264 `node:test` tests pass (`npm test`). They include repository-level tests that apply every migration to an in-memory SQLite database and run the real Drizzle statements: the FTS triggers, the indexed search path against the old full-corpus path, single-use OAuth state, and the one-transaction disconnect.
